@@ -17,7 +17,7 @@ static int serial_fd;
 
 /* Serial handle states. */
 #define SERIAL_STATE_START        0x10
-#define SERIAL_STATE_SS_STOPPED   0xC8
+#define SERIAL_STATE_SS           0xC8
 #define SERIAL_STATE_READ_MEM_CMD 0xD8
 
 //#define USE_MOCKS
@@ -191,24 +191,6 @@ static char *read_mock_memory(size_t len)
 
 	return (buff1);
 }
-
-
-
-static char *read_memory(size_t len)
-{
-	char *buff, *buff1;
-
-	if ((buff = malloc(len)) == NULL)
-		errx("Unable to allocate %zd bytes!\n", len);
-
-	for (size_t i = 0; i < len; i++)
-		buff[i] = 0x90;
-
-	buff1 = encode_hex(buff, len);
-	free(buff);
-
-	return (buff1);
-}
 #endif
 
 /**
@@ -216,8 +198,17 @@ static char *read_memory(size_t len)
  */
 static void handle_single_step(void)
 {
+	/* For mock, just send the we're already halted =). */
 #ifdef USE_MOCKS
 	send_gdb_cmd("S05", 3);
+#else
+	union minibuf mb;
+
+	/* Send to our serial-line that we want a single-step. */
+	mb.b8[0]  = SERIAL_STATE_SS;
+	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+
+	have_x86_regs = 0;
 #endif
 }
 
@@ -564,6 +555,13 @@ static void handle_single_step_stop(struct srm_x86_regs *x86_rm)
 	if (gdb_fd <= 0)
 		printf("Single-stepped, you can now connect GDB!\n");
 
+	/*
+	 * If there is a valid connection already, tell GDB
+	 * that we're already stopped.
+	 */
+	else
+		send_gdb_cmd("S05", 3);
+
 #ifdef DUMP_REGS
 	printf("eax: 0x%x\n", x86_regs.r.eax);
 	printf("ebx: 0x%x\n", x86_regs.r.ebx);
@@ -573,10 +571,8 @@ static void handle_single_step_stop(struct srm_x86_regs *x86_rm)
 	printf("edi: 0x%x\n", x86_regs.r.edi);
 	printf("ebp: 0x%x\n", x86_regs.r.ebp);
 	printf("esp: 0x%x\n", x86_regs.r.esp);
-
 	printf("eip: 0x%x\n", x86_regs.r.eip);
 	printf("eflags: 0x%x\n", x86_regs.r.eflags);
-
 	printf("cs: 0x%x\n", x86_regs.r.cs);
 	printf("ds: 0x%x\n", x86_regs.r.ds);
 	printf("es: 0x%x\n", x86_regs.r.es);
@@ -617,9 +613,9 @@ void handle_serial_msg(struct handler_fd *hfd)
 
 		switch (state) {
 		case SERIAL_STATE_START:
-			if (curr_byte == SERIAL_STATE_SS_STOPPED)
+			if (curr_byte == SERIAL_STATE_SS)
 			{
-				state   = SERIAL_STATE_SS_STOPPED;
+				state   = SERIAL_STATE_SS;
 				buf_idx = 0;
 				memset(&rm_x86_r, 0, x86_regs_size);
 			}
@@ -635,7 +631,7 @@ void handle_serial_msg(struct handler_fd *hfd)
 		 * PC has stopped and have dumped the regs + sav mem
 		 * So this state saves the regs + the saved instructions
 		 */
-		case SERIAL_STATE_SS_STOPPED:
+		case SERIAL_STATE_SS:
 			/* Save regs. */
 			if (buf_idx < x86_regs_size)
 				rm_x86_r.r8[buf_idx++] = buff[i];

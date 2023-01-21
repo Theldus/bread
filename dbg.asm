@@ -64,13 +64,12 @@ _start:
 
 .exit:
 
-	xor ax, ax
+	xor eax, eax
 
 	pushf
 	mov bp, sp
 	or word [bp], 1<<8 ; Enable Trap Flag in EFLAGS
 	popf
-
 
 	g:
 		add ax, 1
@@ -87,22 +86,6 @@ _start:
 	popa
 	retf
 
-
-;dbg
-; pushf
-; mov bp, sp
-; or word [bp], 1<<8 ; Enable Trap Flag in EFLAGS
-; popf
-
-
-
-while:
-	;hlt
-	xchg dx, dx
-	xchg cx, cx
-	xchg dx, dx
-	xchg cx, cx
-	jmp while
 
 ;
 ;
@@ -145,7 +128,7 @@ handler_int1:
 	jne .exit
 
 	; Signal that we stopped!
-	mov bl, MSG_STOP_SINGLE_STEP
+	mov bl, MSG_SINGLE_STEP
 	call uart_write_byte
 
 	;
@@ -218,40 +201,28 @@ handler_int3:
 	iret
 	nop
 
-; criar uma var de 'should_step':
-; é setada pra 1 no handler uart de single-step
-; e setada pra 0 no handler de int1
-; se alguem acordar o cod antes e isso triggar int1
-; checar se should_step é 0 ou 1.. se 0 ignora,
-; se 1 procede...
 
 
-; int1_pseudo:
-;
-; should_step = 1
-; int1:
-;   if (!should_step)
-;      exit
-;
-;   send_regs
-;   add: h: hlt + jmp h
-;   should_step = 0
-;   exit
-;
-; handler_int4_com1_pseudo:
-;   if (single_step)
-;     recover_mem (from h: hlt + jmp h)
-;     set EIP = saved EIP
-;     should_step = 1
-;     exit
-;
-;
-;
-;
 
+;
+;
+;
+;
+; Stack order:
+;  0 EDI  <--- top
+;  4 ESI      \
+;  8 EBP       \
+; 12 ESP        | - Saved by us (32-bit each)
+; 16 EBX        |
+; 20 EDX       /
+; 24 ECX      /
+; 28 EAX    --
+; 32 EIP     ---
+; 34 CS         |-- Saved for us (16-bit each)
+; 36 EFLAGS  ---
+;
 handler_int4_com1:
 	pushad
-	pushfd
 	push ds
 
 	; ACK interrupts, only PIC master is enough to us
@@ -271,20 +242,17 @@ handler_int4_com1:
 	cmp al, MSG_READ_MEM    ; Read memory
 	je .state_start_read_memory
 
-	;cmp al, MSG_SINGLE_STEP ; Single-step
-	;je .state_start_single_step
+	cmp al, MSG_SINGLE_STEP ; Single-step
+	je .state_start_single_step
 
 	jmp .exit ; Unrecognized byte
 
 	; Already inside a state, check which one
 	; and acts accordingly
 .check_other_states:
-	;cmp al, STATE_READ_MEM
 	cmp byte [cs:state], STATE_READ_MEM
 	je .state_read_memory_params
 	jmp .exit
-
-
 
 	; ---------------------------------------------
 	; Read memory operations
@@ -316,7 +284,6 @@ handler_int4_com1:
 	; Read memory
 	;
 .state_read_memory:
-
 	; Signal that we're dumping the memory
 	mov bl, MSG_READ_MEM
 	call uart_write_byte
@@ -338,13 +305,40 @@ handler_int4_com1:
 
 	; Reset our state
 	mov byte [cs:state], STATE_DEFAULT
+	jmp .exit
 
+	; ---------------------------------------------
+	; Single-step
+	; ---------------------------------------------
 
+	;
+	; Start of state/single-step function
+	;
+.state_start_single_step:
+	; Retrieve segment+off
+	mov ax, [cs:saved_cs]
+	mov ds, ax
+	mov si, [cs:saved_eip]
 
+	; Restore origin insn
+	mov eax, dword [cs:saved_insn]
+	mov dword [ds:si], eax
+
+	; Restore CS+EIP (just to be double sure where we
+	; will resume our execution)
+	mov ax, ds
+	mov bp, sp
+	mov word [ss:bp+32], ax ; EIP
+	mov word [ss:bp+34], si ; CS
+
+	; Set the 'should_step' to 1
+	mov byte [cs:should_step], 1
+
+	; Reset our state
+	mov byte [cs:state], STATE_DEFAULT
 
 .exit:
 	pop ds
-	popfd
 	popad
 	iret
 
@@ -449,8 +443,6 @@ phys_to_seg:
 	mov ax,  0xFFFF
 	sub ebx, 0xFFFF0
 	ret
-
-
 
 
 ; --------------------------------
