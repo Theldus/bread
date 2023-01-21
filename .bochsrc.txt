@@ -1,0 +1,11 @@
+megs: 16
+romimage: file="/usr/share/bochs/BIOS-bochs-latest"
+vgaromimage: file="/usr/share/bochs/VGABIOS-lgpl-latest"
+floppya: 1_44="bootable.img", status=inserted
+boot: a
+log: bochsout.txt
+mouse: enabled=0
+clock: sync=none, time0=utc
+display_library: x, options="gui_debug"
+magic_break: enabled=1
+com1: enabled=1, mode=socket-client, dev=localhost:2345

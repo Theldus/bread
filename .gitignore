@@ -1,0 +1,11 @@
+*~
+*.swp
+*.swo
+*.o
+*.d
+*.img
+*.bin
+bridge
+bochsout.txt
+bx_enh_dbg.ini
+
