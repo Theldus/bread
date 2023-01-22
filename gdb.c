@@ -141,6 +141,27 @@ static ssize_t send_gdb_cmd(const char *buff, size_t len)
 /**
  *
  */
+static inline void send_gdb_halt_reason(void) {
+	send_gdb_cmd("S05", 3);
+}
+
+/**
+ *
+ */
+static inline void send_gdb_ack(void) {
+	send_all(gdb_fd, "+", 1, 0);
+}
+
+/**
+ *
+ */
+static inline void send_gdb_unsupported_msg(void) {
+	send_gdb_cmd(NULL, 0);
+}
+
+/**
+ *
+ */
 static char *read_registers(void)
 {
 	char *buff;
@@ -193,14 +214,18 @@ static char *read_mock_memory(size_t len)
 }
 #endif
 
+/* ------------------------------------------------------------------*
+ * GDB handlers                                                      *
+ * ------------------------------------------------------------------*/
+
 /**
  *
  */
-static void handle_single_step(void)
+static void handle_gdb_single_step(void)
 {
 	/* For mock, just send the we're already halted =). */
 #ifdef USE_MOCKS
-	send_gdb_cmd("S05", 3);
+	send_gdb_halt_reason();
 #else
 	union minibuf mb;
 
@@ -215,24 +240,22 @@ static void handle_single_step(void)
 /**
  *
  */
-static void handle_halt_reason(void)
-{
+static void handle_gdb_halt_reason(void) {
 	/* due to signal (SIGTRAP, 5). */
-	send_gdb_cmd("S05", 3);
+	send_gdb_halt_reason();
 }
 
 /**
  *
  */
-static void handle_read_registers(void)
-{
+static void handle_gdb_read_registers(void) {
 	send_gdb_cmd(read_registers(), 128);
 }
 
 /**
  *
  */
-static int handle_read_memory(const char *buff, size_t len)
+static int handle_gdb_read_memory(const char *buff, size_t len)
 {
 	const char* end;
 	const char *ptr;
@@ -306,8 +329,6 @@ already_physical:
 	if (!dump_buffer)
 		errx("Unable to alloc %d bytes!\n", amnt);
 
-	printf("asked to read: %x / bytes: %d\n", addr, amnt);
-
 	/*
 	 * Asks the serial device to send its memory
 	 *
@@ -340,10 +361,177 @@ already_physical:
 	return (0);
 }
 
+struct gdb_handle
+{
+	int  state;
+	int  csum;
+	int  cmd_idx;
+	char buff[32];
+	char csum_read[3];
+	char cmd_buff[64];
+} gdb_handle = {
+	.state = GDB_STATE_START
+};
+
 /**
  *
  */
-static int handle_receive_read_memory(void)
+static int handle_gdb_cmd(struct gdb_handle *gh)
+{
+	int csum_chk;
+
+	csum_chk = (int) str2hex(gh->csum_read, 2, NULL);
+	if (csum_chk != gh->csum)
+		errw("Checksum for message: %s (%d) doesnt match: %d!\n",
+			gh->cmd_buff, csum_chk, gh->csum);
+
+	/* Ack received message. */
+	send_gdb_ack();
+
+	/*
+	 * Handle single-char messages.
+	 *
+	 * From GDB docs:
+	 * > At a minimum, a stub is required to support the ‘?’
+	 *   command to tell GDB the reason for halting, ‘g’ and
+	 *   ‘G’ commands for register access, and the ‘m’ and
+	 *   ‘M’ commands for memory access.
+	 *
+	 * > Stubs that only control single-threaded targets can
+	 *   implement run control with the ‘c’ (continue)
+	 *   command, and if the target architecture supports
+	 *   hardware- assisted single-stepping, the ‘s’ (step)
+	 *   command.
+	 *
+	 * > ... All other commands are optional.
+	 */
+	switch (gh->cmd_buff[0]) {
+	/* Read registers. */
+	case 'g':
+		handle_gdb_read_registers();
+		break;
+	/* Read memory. */
+	case 'm':
+		handle_gdb_read_memory(gh->cmd_buff, sizeof gh->cmd_buff);
+		break;
+	/* Halt reason. */
+	case '?':
+		handle_gdb_halt_reason();
+		break;
+	/* Single-step. */
+	case 's':
+		handle_gdb_single_step();
+		break;
+	/* Not-supported messages. */
+	default:
+		send_gdb_unsupported_msg();
+		break;
+	}
+
+	return (0);
+}
+
+/* ------------------------------------------------------------------*
+ * GDB handling state machine                                        *
+ * ------------------------------------------------------------------*/
+
+static void handle_gdb_state_start(struct gdb_handle *gh,
+	uint8_t curr_byte)
+{
+	/* Skip any char before a start of command. */
+	if (curr_byte != '$')
+		return;
+
+	gh->state   = GDB_STATE_CMD;
+	memset(gh->cmd_buff, 0, sizeof gh->cmd_buff);
+	gh->csum    = 0;
+	gh->cmd_idx = 0;
+}
+
+static inline void handle_gdb_state_csum_d1(struct gdb_handle *gh,
+	uint8_t curr_byte)
+{
+	gh->csum_read[0] = curr_byte;
+	gh->state = GDB_STATE_CSUM_D2;
+}
+
+static inline void handle_gdb_state_csum_d2(struct gdb_handle *gh,
+	uint8_t curr_byte)
+{
+	gh->csum_read[1] = curr_byte;
+	gh->state        = GDB_STATE_START;
+	gh->csum        &= 0xFF;
+
+	/* Handles the command. */
+	handle_gdb_cmd(gh);
+
+	LOG_CMD_REC("Command: (%s), csum: %x, csum_read: %s\n",
+		gh->cmd_buff, gh->csum, gh->csum_read);
+}
+
+static inline void handle_gdb_state_cmd(struct gdb_handle *gh,
+	uint8_t curr_byte)
+{
+	if (curr_byte == '#')
+	{
+		gh->state = GDB_STATE_CSUM_D1;
+		return;
+	}
+	gh->csum += curr_byte;
+
+	/* Just ignore if command exceeds buffer size. */
+	if (gh->cmd_idx > sizeof gh->cmd_buff - 2)
+		return;
+
+	gh->cmd_buff[gh->cmd_idx++] = curr_byte;
+}
+
+/**
+ *
+ */
+void handle_gdb_msg(struct handler_fd *hfd)
+{
+	int i;
+	ssize_t ret;
+	uint8_t curr_byte;
+
+	ret = recv(gdb_fd, gdb_handle.buff, sizeof gdb_handle.buff, 0);
+	if (ret <= 0)
+		errx("GDB closed!\n");
+
+	for (i = 0; i < ret; i++)
+	{
+		curr_byte = gdb_handle.buff[i] & 0xFF;
+
+		switch (gdb_handle.state) {
+		/* Decide which state to go. */
+		case GDB_STATE_START:
+			handle_gdb_state_start(&gdb_handle, curr_byte);
+			break;
+		/* First digit checksum. */
+		case GDB_STATE_CSUM_D1:
+			handle_gdb_state_csum_d1(&gdb_handle, curr_byte);
+			break;
+		/* Second digit checsum. */
+		case GDB_STATE_CSUM_D2:
+			handle_gdb_state_csum_d2(&gdb_handle, curr_byte);
+			break;
+		/* Inside a command. */
+		case GDB_STATE_CMD:
+			handle_gdb_state_cmd(&gdb_handle, curr_byte);
+			break;
+		}
+	}
+}
+
+/* ------------------------------------------------------------------*
+ * Serial handlers                                                   *
+ * ------------------------------------------------------------------*/
+
+/**
+ *
+ */
+static int handle_serial_receive_read_memory(void)
 {
 	char *memory;
 	int i, j, k, count;
@@ -404,135 +592,7 @@ no_patch:
 /**
  *
  */
-static int handle_gdb_cmd(const char *buff, size_t len, int csum,
-	const char cread[3])
-{
-	int csum_chk;
-
-	csum_chk = (int) str2hex(cread, 2, NULL);
-	if (csum_chk != csum)
-		errw("Checksum for message: %s (%d) doesnt match: %d!\n",
-			buff, csum_chk, csum);
-
-	/* Ack received message. */
-	send_all(gdb_fd, "+", 1, 0);
-
-	/*
-	 * Handle single-char messages.
-	 *
-	 * From GDB docs:
-	 * > At a minimum, a stub is required to support the ‘?’
-	 *   command to tell GDB the reason for halting, ‘g’ and
-	 *   ‘G’ commands for register access, and the ‘m’ and
-	 *   ‘M’ commands for memory access.
-	 *
-	 * > Stubs that only control single-threaded targets can
-	 *   implement run control with the ‘c’ (continue)
-	 *   command, and if the target architecture supports
-	 *   hardware- assisted single-stepping, the ‘s’ (step)
-	 *   command.
-	 *
-	 * > ... All other commands are optional.
-	 */
-	switch (buff[0]) {
-	/* Read registers. */
-	case 'g':
-		handle_read_registers();
-		break;
-	/* Read memory. */
-	case 'm':
-		handle_read_memory(buff, len);
-		break;
-	/* Halt reason. */
-	case '?':
-		handle_halt_reason();
-		break;
-	/* Single-step. */
-	case 's':
-		handle_single_step();
-		break;
-	/* Not-supported messages. */
-	default:
-		send_gdb_cmd(NULL, 0);
-		break;
-	}
-
-	return (0);
-}
-
-/**
- *
- */
-void handle_gdb_msg(struct handler_fd *hfd)
-{
-	int i;
-	ssize_t ret;
-	static int state  = GDB_STATE_START;
-	static int csum   = 0;
-	static char buff[32];
-	static char csum_read[3] = {0};
-	static char cmd_buff[64] = {0};
-	static int  cmd_idx      =  0;
-
-	gdb_fd = hfd->fd;
-
-	ret = recv(gdb_fd, buff, sizeof buff, 0);
-	if (ret <= 0)
-		errx("GDB closed!\n");
-
-	for (i = 0; i < ret; i++)
-	{
-		switch (state) {
-		case GDB_STATE_START:
-			/* Skip any char before a start of command. */
-			if (buff[i] != '$')
-				continue;
-
-			state   = GDB_STATE_CMD;
-			memset(cmd_buff, 0, sizeof cmd_buff);
-			csum    = 0;
-			cmd_idx = 0;
-			break;
-
-		case GDB_STATE_CSUM_D1:
-			csum_read[0] = buff[i];
-			state = GDB_STATE_CSUM_D2;
-			break;
-
-		case GDB_STATE_CSUM_D2:
-			csum_read[1] = buff[i];
-			state        = GDB_STATE_START;
-			csum        &= 0xFF;
-
-			/* Handles the command. */
-			handle_gdb_cmd(cmd_buff, sizeof cmd_buff, csum, csum_read);
-
-			LOG_CMD_REC("Command: (%s), csum: %x, csum_read: %s\n",
-				cmd_buff, csum, csum_read);
-			break;
-
-		/* Inside a command. */
-		case GDB_STATE_CMD:
-			if (buff[i] == '#') {
-				state = GDB_STATE_CSUM_D1;
-				continue;
-			}
-			csum += buff[i];
-
-			/* Just ignore if command exceeds buffer size. */
-			if (cmd_idx > sizeof cmd_buff - 2)
-				continue;
-
-			cmd_buff[cmd_idx++] = buff[i];
-			break;
-		}
-	}
-}
-
-/**
- *
- */
-static void handle_single_step_stop(struct srm_x86_regs *x86_rm)
+static void handle_serial_single_step_stop(struct srm_x86_regs *x86_rm)
 {
 	x86_regs.r.eax = x86_rm->eax;
 	x86_regs.r.ecx = x86_rm->ecx;
@@ -560,7 +620,7 @@ static void handle_single_step_stop(struct srm_x86_regs *x86_rm)
 	 * that we're already stopped.
 	 */
 	else
-		send_gdb_cmd("S05", 3);
+		send_gdb_halt_reason();
 
 #ifdef DUMP_REGS
 	printf("eax: 0x%x\n", x86_regs.r.eax);
@@ -582,6 +642,75 @@ static void handle_single_step_stop(struct srm_x86_regs *x86_rm)
 #endif
 }
 
+/* ------------------------------------------------------------------*
+ * Serial handling state machine                                     *
+ * ------------------------------------------------------------------*/
+
+struct serial_handle
+{
+	int  state;
+	int  buff_idx;
+	char buff[64];
+	char csum_read[3];
+	char cmd_buff[64];
+	union urm_x86_regs rm_x86_r;
+} serial_handle = {
+	.state = SERIAL_STATE_START
+};
+
+
+static void handle_serial_state_start(struct serial_handle *sh,
+	uint8_t curr_byte)
+{
+	if (curr_byte == SERIAL_STATE_SS)
+	{
+		sh->state    = SERIAL_STATE_SS;
+		sh->buff_idx = 0;
+		memset(&sh->rm_x86_r, 0, sizeof(union urm_x86_regs));
+	}
+	else if (curr_byte == SERIAL_STATE_READ_MEM_CMD)
+	{
+		sh->state   = SERIAL_STATE_READ_MEM_CMD;
+		sh->buff_idx = 0;
+	}
+}
+
+static void handle_serial_state_ss(struct serial_handle *sh,
+	uint8_t curr_byte)
+{
+	size_t x86_regs_size = sizeof(union urm_x86_regs);
+
+	/* Save regs. */
+	if (sh->buff_idx < x86_regs_size)
+		sh->rm_x86_r.r8[sh->buff_idx++] = curr_byte;
+
+	/* Save instructions. */
+	else if (sh->buff_idx < x86_regs_size + 4)
+	{
+		saved_insns[sh->buff_idx - x86_regs_size] = curr_byte;
+		sh->buff_idx++;
+	}
+
+	/* Check if ended. */
+	if (sh->buff_idx == x86_regs_size + 4)
+	{
+		sh->state = SERIAL_STATE_START;
+		handle_serial_single_step_stop(&sh->rm_x86_r.r);
+	}
+}
+
+static void handle_serial_state_read_mem_cmd(struct serial_handle *sh,
+	uint8_t curr_byte)
+{
+	dump_buffer[sh->buff_idx++] = curr_byte;
+	if (sh->buff_idx == last_dump_amnt)
+	{
+		sh->state = SERIAL_STATE_START;
+		handle_serial_receive_read_memory();
+	}
+}
+
+
 /**
  *
  */
@@ -590,79 +719,42 @@ void handle_serial_msg(struct handler_fd *hfd)
 	int i;
 	ssize_t ret;
 	uint8_t curr_byte;
-	size_t x86_regs_size;
 
-	static union urm_x86_regs rm_x86_r;
-	static int state      = SERIAL_STATE_START;
-	static char buff[64];
-	static int  buf_idx   =  0;
+	ret = recv(serial_fd, serial_handle.buff,
+		sizeof serial_handle.buff, 0);
 
-	static char csum_read[3] = {0};
-	static char cmd_buff[64] = {0};
-
-	serial_fd = hfd->fd;
-	x86_regs_size = sizeof(union urm_x86_regs);
-
-	ret = recv(serial_fd, buff, sizeof buff, 0);
 	if (ret <= 0)
 		errx("Serial closed!\n");
 
+	/* For each received byte. */
 	for (i = 0; i < ret; i++)
 	{
-		curr_byte = buff[i] & 0xFF;
+		curr_byte = serial_handle.buff[i] & 0xFF;
 
-		switch (state) {
+		switch (serial_handle.state) {
+		/* Check which state should go, if any. */
 		case SERIAL_STATE_START:
-			if (curr_byte == SERIAL_STATE_SS)
-			{
-				state   = SERIAL_STATE_SS;
-				buf_idx = 0;
-				memset(&rm_x86_r, 0, x86_regs_size);
-			}
-			else if (curr_byte == SERIAL_STATE_READ_MEM_CMD)
-			{
-				printf("read mem!\n");
-				state   = SERIAL_STATE_READ_MEM_CMD;
-				buf_idx = 0;
-			}
+			handle_serial_state_start(&serial_handle, curr_byte);
 			break;
-
 		/*
 		 * PC has stopped and have dumped the regs + sav mem
 		 * So this state saves the regs + the saved instructions
 		 */
 		case SERIAL_STATE_SS:
-			/* Save regs. */
-			if (buf_idx < x86_regs_size)
-				rm_x86_r.r8[buf_idx++] = buff[i];
-
-			/* Save instructions. */
-			else if (buf_idx < x86_regs_size + 4)
-			{
-				saved_insns[buf_idx - x86_regs_size] = buff[i];
-				buf_idx++;
-			}
-
-			/* Check if ended. */
-			if (buf_idx == x86_regs_size + 4)
-			{
-				state = SERIAL_STATE_START;
-				handle_single_step_stop(&rm_x86_r.r);
-			}
+			handle_serial_state_ss(&serial_handle, curr_byte);
 			break;
-
 		/* PC has answered with the memory. */
 		case SERIAL_STATE_READ_MEM_CMD:
-			dump_buffer[buf_idx++] = curr_byte;
-			if (buf_idx == last_dump_amnt)
-			{
-				state = SERIAL_STATE_START;
-				handle_receive_read_memory();
-			}
+			handle_serial_state_read_mem_cmd(&serial_handle,
+				curr_byte);
 			break;
 		}
 	}
 }
+
+/* ------------------------------------------------------------------*
+ * Accept/initialization routines                                    *
+ * ------------------------------------------------------------------*/
 
 /**
  *
@@ -684,6 +776,7 @@ void handle_accept_gdb(struct handler_fd *hfd)
 	h.fd = fd;
 	h.handler = handle_gdb_msg;
 	change_handled_fd(hfd->fd, &h);
+	gdb_fd = fd;
 }
 
 /**
@@ -703,4 +796,5 @@ void handle_accept_serial(struct handler_fd *hfd)
 	h.fd = fd;
 	h.handler = handle_serial_msg;
 	change_handled_fd(hfd->fd, &h);
+	serial_fd = fd;
 }
