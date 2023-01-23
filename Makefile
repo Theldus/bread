@@ -5,6 +5,13 @@ OBJ = gdb.o main.o net.o util.o
 DEP = $(patsubst %.d, .%.d, $(OBJ:.o=.d))
 BIN = bridge boot.bin dbg.bin bootable.img
 
+USE_SERIAL=no
+
+# Check if serial or not
+ifeq ($(USE_SERIAL), yes)
+	CFLAGS += -DUSE_SERIAL
+endif
+
 .PHONY: all bochs clean
 
 all: $(BIN)

@@ -1,9 +1,12 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "net.h"
 #include "util.h"
+
+#define DUMP_REGS 1
 
 /**/
 static int gdb_fd;
@@ -720,8 +723,10 @@ void handle_serial_msg(struct handler_fd *hfd)
 	ssize_t ret;
 	uint8_t curr_byte;
 
-	ret = recv(serial_fd, serial_handle.buff,
-		sizeof serial_handle.buff, 0);
+	serial_fd = hfd->fd;
+
+	ret = read(serial_fd, serial_handle.buff,
+		sizeof serial_handle.buff);
 
 	if (ret <= 0)
 		errx("Serial closed!\n");

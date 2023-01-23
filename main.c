@@ -5,33 +5,29 @@
 /* Main =). */
 int main(void)
 {
-	struct handler_fd hfds[2];
+	struct handler_fd hfds[2] = {0};
 	int ser_sv_fd, gdb_sv_fd;
 
+#ifdef USE_SERIAL
+	setup_serial(&ser_sv_fd, "/dev/ttyUSB0");
+#else
 	setup_server(&ser_sv_fd, 2345);
+#endif
+
 	setup_server(&gdb_sv_fd, 1234);
+
 	printf("Please, conect your serial device first...\n");
 
 	hfds[0].fd = ser_sv_fd;
+#ifdef USE_SERIAL
+	hfds[0].handler = handle_serial_msg;
+#else
 	hfds[0].handler = handle_accept_serial;
-	hfds[1].fd = gdb_sv_fd;
-	hfds[1].handler = handle_accept_gdb;
-
-	handle_fds(2, hfds);
-
-#if 0
-maybe passar so 2 fds: sv_serial e sv_gdb, qnd esses 2
-biscoitarem, fechar a conec deles e invocar uma funcao
-q add os novos fds ao handle_fds (e rmove os antigos)
-e dai handla normalm
-
-
-add handler do gdb, nele, checar se o serial ja ta
-ativo e com os regs, e se n,emitir erro abortando
-td, se s, aceitar de bom grado e trocar os fds
 #endif
 
-
+	hfds[1].fd = gdb_sv_fd;
+	hfds[1].handler = handle_accept_gdb;
+	handle_fds(2, hfds);
 	return (0);
 }
 

@@ -10,6 +10,7 @@
 	extern ssize_t send_all(
 		int conn, const void *buf, size_t len, int flags);
 	extern void setup_server(int *srv_fd, uint16_t port);
+	extern void setup_serial(int *sfd, const char *sdev);
 	extern void close_handled_fd(int fd);
 	extern void change_handled_fd(int fd_old,
 		struct handler_fd *new_hfd);

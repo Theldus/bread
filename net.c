@@ -1,11 +1,17 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <string.h>
+#include <stdlib.h>
 #include <unistd.h>
+#include <termios.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
 #include "net.h"
 #include "util.h"
+
+#define BAUD_RATE B9600
 
 #define MAX_FDS 4
 
@@ -13,6 +19,9 @@ static int nfds;
 static int started;
 static struct pollfd     pfds[MAX_FDS];
 static struct handler_fd hfds[MAX_FDS];
+
+static int serial_fd;
+static struct termios savetty;
 
 /**
  *
@@ -29,7 +38,7 @@ ssize_t send_all(
 	p = buf;
 	while (len)
 	{
-		ret = send(conn, p, len, flags);
+		ret = write(conn, p, len);
 		if (ret == -1)
 			return (-1);
 		p += ret;
@@ -65,6 +74,46 @@ void setup_server(int *srv_fd, uint16_t port)
 
 	/* Listen. */
 	listen(*srv_fd, 1);
+}
+
+/**/
+static void restore_tty(void) {
+	tcsetattr(serial_fd, TCSANOW, &savetty);
+}
+
+/**
+ *
+ */
+void setup_serial(int *sfd, const char *sdev)
+{
+	speed_t spd;
+	struct termios tty;
+
+	/* Open device. */
+	if ((*sfd = open(sdev, O_RDWR | O_NOCTTY)) < 0)
+		errx("Failed to open: %s, (%s)", sdev, strerror(errno));
+
+	/* Attributes. */
+	if (tcgetattr(*sfd, &tty) < 0)
+		errx("Failed to get attr: (%s)", strerror(errno));
+
+	savetty = tty;
+	cfsetospeed(&tty, (speed_t)BAUD_RATE);
+	cfsetispeed(&tty, (speed_t)BAUD_RATE);
+	cfmakeraw(&tty);
+
+	/* TTY settings. */
+	tty.c_cc[VMIN]  = 1;
+	tty.c_cc[VTIME] = 10;
+	tty.c_cflag &= ~CSTOPB;
+	tty.c_cflag &= ~CRTSCTS; /* no HW flow control? */
+	tty.c_cflag |= CLOCAL | CREAD;
+
+	if (tcsetattr(*sfd, TCSANOW, &tty) < 0)
+		errx("Failed to set attr: (%s)", strerror(errno));
+
+	/* Restore tty. */
+	atexit(restore_tty);
 }
 
 /**
