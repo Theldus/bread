@@ -22,6 +22,7 @@ static int serial_fd;
 #define SERIAL_STATE_START        0x10
 #define SERIAL_STATE_SS           0xC8
 #define SERIAL_STATE_READ_MEM_CMD 0xD8
+#define SERIAL_STATE_CONTINUE     0xE8
 
 //#define USE_MOCKS
 
@@ -243,6 +244,19 @@ static void handle_gdb_single_step(void)
 /**
  *
  */
+static void handle_gdb_continue(void)
+{
+	union minibuf mb;
+
+	/* Send to our serial-line that we want to continue. */
+	mb.b8[0]  = SERIAL_STATE_CONTINUE;
+	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+	have_x86_regs = 0;
+}
+
+/**
+ *
+ */
 static void handle_gdb_halt_reason(void) {
 	/* due to signal (SIGTRAP, 5). */
 	send_gdb_halt_reason();
@@ -424,6 +438,10 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 	/* Single-step. */
 	case 's':
 		handle_gdb_single_step();
+		break;
+	/* Continue. */
+	case 'c':
+		handle_gdb_continue();
 		break;
 	/* Not-supported messages. */
 	default:

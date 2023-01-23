@@ -99,6 +99,7 @@ STOP_OPC equ 0x90fdebf4 ; (f4) (eb fd) (90)
 ; The machine has stopped in single-step mode!
 MSG_SINGLE_STEP      equ 0xC8
 MSG_READ_MEM         equ 0xD8
+MSG_CONTINUE         equ 0xE8
 
 ; States
 ; ------

@@ -65,6 +65,8 @@ _start:
 .exit:
 
 	xor eax, eax
+	xor ecx, ecx
+	mov cx, 0xFFFF
 
 	pushf
 	mov bp, sp
@@ -76,10 +78,7 @@ _start:
 		add ax, 2
 		add ax, 3
 		add ax, 4
-		jmp g
-
-
-	jmp $
+		loop g
 
 	pop ds
 	popf
@@ -209,17 +208,18 @@ handler_int3:
 ;
 ;
 ; Stack order:
-;  0 EDI  <--- top
-;  4 ESI      \
-;  8 EBP       \
-; 12 ESP        | - Saved by us (32-bit each)
-; 16 EBX        |
-; 20 EDX       /
-; 24 ECX      /
-; 28 EAX    --
-; 32 EIP     ---
-; 34 CS         |-- Saved for us (16-bit each)
-; 36 EFLAGS  ---
+;  0 DS    <--- top
+;  2 EDI     \
+;  6 ESI      \
+; 10 EBP       \
+; 14 ESP        | - Saved by us (32-bit each)
+; 18 EBX        |
+; 22 EDX       /
+; 26 ECX      /
+; 30 EAX    --
+; 34 EIP     ---
+; 36 CS         |-- Saved for us (16-bit each)
+; 38 EFLAGS  ---
 ;
 handler_int4_com1:
 	pushad
@@ -244,6 +244,9 @@ handler_int4_com1:
 
 	cmp al, MSG_SINGLE_STEP ; Single-step
 	je .state_start_single_step
+
+	cmp al, MSG_CONTINUE ; Continue
+	je .state_start_continue
 
 	jmp .exit ; Unrecognized byte
 
@@ -312,8 +315,10 @@ handler_int4_com1:
 	; ---------------------------------------------
 
 	;
-	; Start of state/single-step function
+	; Start of state/single-step (and continue) function
+	; (because continue is very similar)
 	;
+.state_start_continue:
 .state_start_single_step:
 	; Retrieve segment+off
 	mov ax, [cs:saved_cs]
@@ -328,14 +333,27 @@ handler_int4_com1:
 	; will resume our execution)
 	mov ax, ds
 	mov bp, sp
-	mov word [ss:bp+32], ax ; EIP
-	mov word [ss:bp+34], si ; CS
+
+	mov word [ss:bp+34], si ; EIP
+	mov word [ss:bp+36], ax ; CS
 
 	; Set the 'should_step' to 1
 	mov byte [cs:should_step], 1
 
+.check_continue:
+	; Check if we should disable single-step or not
+	; i.e: if we are in a continue message
+	cmp byte [cs:byte_read], MSG_CONTINUE
+	jne .not_continue
+
+	; Clear the 'TF' flag of our EFLAGS, and
+	; everything should be fine
+	and word [ss:bp+38], ~(1<<8)
+
+.not_continue:
 	; Reset our state
 	mov byte [cs:state], STATE_DEFAULT
+
 
 .exit:
 	pop ds
