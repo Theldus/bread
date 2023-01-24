@@ -5,7 +5,19 @@
 
 ;
 ;
-;
+; Register usage:
+; 0  DS
+; 2  EFLAGS
+; 4  DI
+; 6  SI
+; 8  BP
+; 10 SP
+; 12 BX
+; 14 DX
+; 16 CX
+; 18 AX
+; 20 EIP
+; 22 CS
 ;
 _start:
 	pusha
@@ -63,28 +75,35 @@ _start:
 	sti
 
 .exit:
+	; Enable TF and IF in backup flags
+	mov bp, sp
+	or word [bp+2], 1<<8 ; TF
+	or word [bp+2], 1<<9 ; IF
 
-	xor eax, eax
-	xor ecx, ecx
-	mov cx, 0xFFFF
-
+	; Enable TF right now too
 	pushf
 	mov bp, sp
-	or word [bp], 1<<8 ; Enable Trap Flag in EFLAGS
+	or word [bp], 1<<8
 	popf
 
-	g:
-		add ax, 1
-		add ax, 2
-		add ax, 3
-		add ax, 4
-		loop g
+	; Original instructions here
+	nop
+	nop
 
+	; Return from caller/BIOS
 	pop ds
 	popf
 	popa
 	retf
 
+; Padding bytes to 'protect' our handler:
+; because when single-stepping 'retf'
+; we will overwrite the next 3 bytes too
+; which might be the handler
+nop
+nop
+nop
+nop
 
 ;
 ;
