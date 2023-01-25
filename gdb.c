@@ -33,7 +33,10 @@ static int have_x86_regs = 0;
 static uint8_t *dump_buffer;
 static uint32_t last_dump_phys_addr;
 static uint16_t last_dump_amnt;
+
+#ifndef UART_POLLING
 static uint8_t saved_insns[4];
+#endif
 
 /**
  *
@@ -555,6 +558,8 @@ void handle_gdb_msg(struct handler_fd *hfd)
 static int handle_serial_receive_read_memory(void)
 {
 	char *memory;
+
+#ifndef UART_POLLING
 	int i, j, k, count;
 	uint32_t break_eip;
 	int sindex, eindex;
@@ -600,6 +605,8 @@ static int handle_serial_receive_read_memory(void)
 	/* Patch. */
 	for (k = 0; k < count; k++, i++, j++)
 		dump_buffer[i] = saved_insns[j];
+
+#endif /* !UART_POLLING. */
 
 no_patch:
 	memory = encode_hex(dump_buffer, last_dump_amnt);
@@ -705,15 +712,21 @@ static void handle_serial_state_ss(struct serial_handle *sh,
 	if (sh->buff_idx < x86_regs_size)
 		sh->rm_x86_r.r8[sh->buff_idx++] = curr_byte;
 
+#ifndef UART_POLLING
 	/* Save instructions. */
 	else if (sh->buff_idx < x86_regs_size + 4)
 	{
 		saved_insns[sh->buff_idx - x86_regs_size] = curr_byte;
 		sh->buff_idx++;
 	}
+#endif
 
 	/* Check if ended. */
+#ifndef UART_POLLING
 	if (sh->buff_idx == x86_regs_size + 4)
+#else
+	if (sh->buff_idx == x86_regs_size)
+#endif
 	{
 		sh->state = SERIAL_STATE_START;
 		handle_serial_single_step_stop(&sh->rm_x86_r.r);

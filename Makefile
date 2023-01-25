@@ -12,6 +12,12 @@ ifeq ($(USE_SERIAL), yes)
 	CFLAGS += -DUSE_SERIAL
 endif
 
+# Define if polling or not
+ifeq ($(UART_POLLING), yes)
+	CFLAGS   += -DUART_POLLING
+	ASMFLAGS += -DUART_POLLING
+endif
+
 .PHONY: all bochs clean
 
 all: $(BIN)
@@ -22,7 +28,7 @@ all: $(BIN)
 
 # ASM Files
 %.bin: %.asm
-	nasm -fbin $< -o $@
+	nasm -fbin $< -o $@ $(ASMFLAGS)
 
 dbg.bin: dbg.asm constants.inc
 

@@ -35,6 +35,22 @@
 	call uart_write_byte
 %endmacro
 
+%macro exit_int4 0
+	%ifndef UART_POLLING
+		jmp .exit
+	%else
+		jmp read_uart
+	%endif
+%endmacro
+
+%macro true_exit_int4 0
+	%ifndef UART_POLLING
+		jmp .exit
+	%else
+		jmp exit_int1
+	%endif
+%endmacro
+
 ; --------------------------------
 ; Constants
 ; --------------------------------

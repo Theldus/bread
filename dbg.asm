@@ -71,14 +71,18 @@ _start:
 	mov word [bx+(36*4)+2], cs
 
 	; Configure our PIC to receive ints from COM1
+%ifndef UART_POLLING
 	call setup_pic
 	sti
+%endif
 
 .exit:
 	; Enable TF and IF in backup flags
 	mov bp, sp
 	or word [bp+2], 1<<8 ; TF
+%ifndef UART_POLLING
 	or word [bp+2], 1<<9 ; IF
+%endif
 
 	; Enable TF right now too
 	pushf
@@ -138,12 +142,14 @@ handler_int1:
 	push fs
 	push gs
 
+%ifndef UART_POLLING
 	; Check if we should proceed:
 	; Since we may also wakeup (from hlt) due to
 	; another interrupt, we need to check if our
 	; flag allows us to proceed or not.
 	cmp byte [cs:should_step], 1
-	jne .exit
+	jne exit_int1
+%endif
 
 	; Signal that we stopped!
 	mov bl, MSG_SINGLE_STEP
@@ -176,6 +182,7 @@ handler_int1:
 		uart_write_word ax
 		loop .loop3
 
+%ifndef UART_POLLING
 	; Overwrite our return instruction by
 	;   lbl: hlt + jmp lbl
 	; This avoids the code to proceed unless
@@ -204,8 +211,13 @@ handler_int1:
 
 	; should_step = 0
 	mov byte [cs:should_step], 0
+%endif
 
-.exit:
+%ifdef UART_POLLING
+	jmp read_uart
+%endif
+
+exit_int1:
 	pop gs
 	pop fs
 	pop es
@@ -248,6 +260,13 @@ handler_int4_com1:
 	outbyte PIC1_COMMAND, 0x20 ; ACK/EOI
 
 	; Read a single byte from UART to al
+read_uart:
+%ifdef UART_POLLING
+	inputb UART_LSR ; Check if there is input available
+	bt  ax, 0
+	jnc read_uart
+%endif
+
 	inputb UART_RB
 	mov byte [cs:byte_read], al
 
@@ -264,17 +283,17 @@ handler_int4_com1:
 	cmp al, MSG_SINGLE_STEP ; Single-step
 	je .state_start_single_step
 
-	cmp al, MSG_CONTINUE ; Continue
+	cmp al, MSG_CONTINUE    ; Continue
 	je .state_start_continue
 
-	jmp .exit ; Unrecognized byte
+	exit_int4               ; Unrecognized byte
 
 	; Already inside a state, check which one
 	; and acts accordingly
 .check_other_states:
 	cmp byte [cs:state], STATE_READ_MEM
 	je .state_read_memory_params
-	jmp .exit
+	exit_int4
 
 	; ---------------------------------------------
 	; Read memory operations
@@ -286,7 +305,7 @@ handler_int4_com1:
 .state_start_read_memory:
 	mov byte [cs:byte_counter], 0
 	mov byte [cs:state], STATE_READ_MEM
-	jmp .exit
+	exit_int4
 
 	;
 	; Obtain memory address to be read
@@ -300,7 +319,7 @@ handler_int4_com1:
 	; Check if we read everything
 	cmp byte [cs:byte_counter], 6
 	je  .state_read_memory
-	jmp .exit
+	exit_int4
 
 	;
 	; Read memory
@@ -327,7 +346,7 @@ handler_int4_com1:
 
 	; Reset our state
 	mov byte [cs:state], STATE_DEFAULT
-	jmp .exit
+	exit_int4
 
 	; ---------------------------------------------
 	; Single-step
@@ -339,6 +358,7 @@ handler_int4_com1:
 	;
 .state_start_continue:
 .state_start_single_step:
+%ifndef UART_POLLING
 	; Retrieve segment+off
 	mov ax, [cs:saved_cs]
 	mov ds, ax
@@ -352,14 +372,16 @@ handler_int4_com1:
 	; will resume our execution)
 	mov ax, ds
 	mov bp, sp
-
 	mov word [ss:bp+34], si ; EIP
 	mov word [ss:bp+36], ax ; CS
 
 	; Set the 'should_step' to 1
 	mov byte [cs:should_step], 1
+%endif
 
 .check_continue:
+	mov bp, sp
+
 	; Check if we should disable single-step or not
 	; i.e: if we are in a continue message
 	cmp byte [cs:byte_read], MSG_CONTINUE
@@ -367,11 +389,16 @@ handler_int4_com1:
 
 	; Clear the 'TF' flag of our EFLAGS, and
 	; everything should be fine
+%ifndef UART_POLLING
 	and word [ss:bp+38], ~(1<<8)
+%else
+	and word [ss:bp+46], ~(1<<8)
+%endif
 
 .not_continue:
 	; Reset our state
 	mov byte [cs:state], STATE_DEFAULT
+	true_exit_int4
 
 
 .exit:
@@ -379,6 +406,7 @@ handler_int4_com1:
 	popad
 	iret
 
+%ifndef UART_POLLING
 ;
 ;
 ;
@@ -407,6 +435,7 @@ setup_pic:
 	; Clear interrupt mask
 	outbyte PIC1_DATA, 0xEF
 	ret
+%endif
 
 ;
 ;
@@ -424,7 +453,9 @@ setup_uart:
 	; IRQs enabled, RTS/DSR set
 	outbyte UART_MCR, UART_MCR_OUT2|UART_MCR_RTS|UART_MCR_DTR
 	; Enable 'Data Available Interrupt'
+%ifndef UART_POLLING
 	outbyte UART_IER, 1
+%endif
 	ret
 
 ;
@@ -489,15 +520,16 @@ idtptr:
 	idt_limit: dw 0
 	idt_base:  dd 0
 
+%ifndef UART_POLLING
 should_step:
 	db 1
-
 saved_cs:
 	dw 0
 saved_eip:
 	dw 0
 saved_insn:
 	dd 0
+%endif
 
 
 ; State machine
