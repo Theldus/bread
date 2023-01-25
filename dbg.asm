@@ -135,12 +135,6 @@ nop
 ; instruction!
 ;
 handler_int1:
-	pushad
-	push ss
-	push ds
-	push es
-	push fs
-	push gs
 
 %ifndef UART_POLLING
 	; Check if we should proceed:
@@ -148,39 +142,14 @@ handler_int1:
 	; another interrupt, we need to check if our
 	; flag allows us to proceed or not.
 	cmp byte [cs:should_step], 1
-	jne exit_int1
+	jne exit_int1_iret
 %endif
 
-	; Signal that we stopped!
-	mov bl, MSG_SINGLE_STEP
-	call uart_write_byte
+	; Save everyone
+	push_regs
 
-	;
-	; Now we need to send our registers
-	; First: 16-bit regs: GS-SS
-	;
-	mov ax, ss
-	mov ds, ax
-	mov si, sp
-	mov cx, 5
-	.loop1:
-		lodsw
-		uart_write_word ax
-		loop .loop1
-
-	; Second: 32-bit regs: EDI-EAX
-	mov cx, 8
-	.loop2:
-		lodsd
-		uart_write_dword eax
-		loop .loop2
-
-	; Third: 16-bit regs: EIP, CS, EFLAGS
-	mov cx, 3
-	.loop3:
-		lodsw
-		uart_write_word ax
-		loop .loop3
+	; Send all regs to our bridge
+	call send_regs
 
 %ifndef UART_POLLING
 	; Overwrite our return instruction by
@@ -189,8 +158,8 @@ handler_int1:
 	; if it really should do so...
 	mov bp, sp
 	xor ebx, ebx
-	mov bx, word [bp+42] ; EIP
-	mov ds, word [bp+44] ; CS
+	mov bx, word [bp+EIP_OFF] ; EIP
+	mov ds, word [bp+CS_OFF]  ; CS
 
 	;
 	; Backup it!
@@ -218,14 +187,14 @@ handler_int1:
 %endif
 
 exit_int1:
-	pop gs
-	pop fs
-	pop es
-	pop ds
-	pop ss
-	popad
+	pop_regs
+exit_int1_iret:
 	iret
 
+
+;
+;
+;
 handler_int3:
 	nop
 	iret
@@ -239,22 +208,10 @@ handler_int3:
 ;
 ;
 ; Stack order:
-;  0 DS    <--- top
-;  2 EDI     \
-;  6 ESI      \
-; 10 EBP       \
-; 14 ESP        | - Saved by us (32-bit each)
-; 18 EBX        |
-; 22 EDX       /
-; 26 ECX      /
-; 30 EAX    --
-; 34 EIP     ---
-; 36 CS         |-- Saved for us (16-bit each)
-; 38 EFLAGS  ---
+;  Same as int1
 ;
 handler_int4_com1:
-	pushad
-	push ds
+	push_regs
 
 	; ACK interrupts, only PIC master is enough to us
 	outbyte PIC1_COMMAND, 0x20 ; ACK/EOI
@@ -372,8 +329,8 @@ read_uart:
 	; will resume our execution)
 	mov ax, ds
 	mov bp, sp
-	mov word [ss:bp+34], si ; EIP
-	mov word [ss:bp+36], ax ; CS
+	mov word [ss:bp+EIP_OFF], si ; EIP
+	mov word [ss:bp+CS_OFF],  ax ; CS
 
 	; Set the 'should_step' to 1
 	mov byte [cs:should_step], 1
@@ -389,11 +346,7 @@ read_uart:
 
 	; Clear the 'TF' flag of our EFLAGS, and
 	; everything should be fine
-%ifndef UART_POLLING
-	and word [ss:bp+38], ~(1<<8)
-%else
-	and word [ss:bp+46], ~(1<<8)
-%endif
+	and word [ss:bp+EFLAGS_OFF], ~(1<<8)
 
 .not_continue:
 	; Reset our state
@@ -402,8 +355,7 @@ read_uart:
 
 
 .exit:
-	pop ds
-	popad
+	pop_regs
 	iret
 
 %ifndef UART_POLLING
@@ -510,6 +462,51 @@ phys_to_seg:
 	mov ebx, eax
 	mov ax,  0xFFFF
 	sub ebx, 0xFFFF0
+	ret
+
+;
+; Send all regs over UART to the bridge
+;
+; Note: This function assumes that the stack
+; follows the layout that 'push_regs' leave,
+; ie:
+;   Stack:
+;     ret_addr/eip (from this function)
+;     push_regs
+;
+send_regs:
+	; Signal that we stopped!
+	mov bl, MSG_SINGLE_STEP
+	call uart_write_byte
+
+	;
+	; Now we need to send our registers
+	; First: 16-bit regs: GS-SS
+	;
+	mov ax, ss
+	mov ds, ax
+	mov si, sp
+	add si, 2   ; Ignores return address/EIP
+	mov cx, 5
+	.loop1:
+		lodsw
+		uart_write_word ax
+		loop .loop1
+
+	; Second: 32-bit regs: EDI-EAX
+	mov cx, 8
+	.loop2:
+		lodsd
+		uart_write_dword eax
+		loop .loop2
+
+	; Third: 16-bit regs: EIP, CS, EFLAGS
+	mov cx, 3
+	.loop3:
+		lodsw
+		uart_write_word ax
+		loop .loop3
+
 	ret
 
 

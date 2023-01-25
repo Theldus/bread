@@ -42,7 +42,6 @@
 		jmp read_uart
 	%endif
 %endmacro
-
 %macro true_exit_int4 0
 	%ifndef UART_POLLING
 		jmp .exit
@@ -51,9 +50,45 @@
 	%endif
 %endmacro
 
+%macro push_regs 0
+	pushad
+	push ss
+	push ds
+	push es
+	push fs
+	push gs
+%endmacro
+%macro pop_regs 0
+	pop gs
+	pop fs
+	pop es
+	pop ds
+	pop ss
+	popad
+%endmacro
+
 ; --------------------------------
 ; Constants
 ; --------------------------------
+
+; Register offsets (push_regs/pop_regs)
+; -------------------------------------
+GS_OFF     equ 0
+FS_OFF     equ 2
+ES_OFF     equ 4
+DS_OFF     equ 6
+SS_OFF     equ 8
+EDI_OFF    equ 10
+ESI_OFF    equ 14
+EBP_OFF    equ 18
+ESP_OFF    equ 22
+EBX_OFF    equ 26
+EDX_OFF    equ 30
+ECX_OFF    equ 34
+EAX_OFF    equ 38
+EIP_OFF    equ 42
+CS_OFF     equ 44
+EFLAGS_OFF equ 46
 
 ; UART
 ; --------------
