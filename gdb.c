@@ -169,6 +169,16 @@ static inline void send_gdb_unsupported_msg(void) {
 /**
  *
  */
+static void send_serial_ctrlc(void)
+{
+	union minibuf mb;
+	mb.b8[0] = 3;
+	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+}
+
+/**
+ *
+ */
 static char *read_registers(void)
 {
 	char *buff;
@@ -462,6 +472,18 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 static void handle_gdb_state_start(struct gdb_handle *gh,
 	uint8_t curr_byte)
 {
+	/*
+	 * If Ctrl+C.
+	 *
+	 * Ctrl+C/break is a special command that doesnt need
+	 * to be ack'ed nor anything
+	 */
+	if (curr_byte == 3)
+	{
+		send_serial_ctrlc();
+		return;
+	}
+
 	/* Skip any char before a start of command. */
 	if (curr_byte != '$')
 		return;

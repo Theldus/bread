@@ -148,6 +148,7 @@ handler_int1:
 	; Save everyone
 	push_regs
 
+handler_int1_send:
 	; Send all regs to our bridge
 	call send_regs
 
@@ -242,6 +243,9 @@ read_uart:
 
 	cmp al, MSG_CONTINUE    ; Continue
 	je .state_start_continue
+
+	cmp al, MSG_CTRLC       ; Ctrl-C/break
+	je .state_start_ctrlc
 
 	exit_int4               ; Unrecognized byte
 
@@ -353,6 +357,16 @@ read_uart:
 	mov byte [cs:state], STATE_DEFAULT
 	true_exit_int4
 
+	; ---------------------------------------------
+	; Ctrl-C/break
+	; ---------------------------------------------
+
+	;
+	; Start of state
+	;
+.state_start_ctrlc:
+	jmp handler_int1_send ; Jump to our int1 handler as if
+	                      ; we're dealing with a single-step
 
 .exit:
 	pop_regs
