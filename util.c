@@ -38,6 +38,21 @@ static inline char to_digit(int nibble)
 /**
  *
  */
+static inline int to_value(int ch)
+{
+	int c = tolower(ch);
+
+	if (c >= '0' && c <= '9')
+		return (c - '0');
+	else if (c >= 'a' && c <= 'f')
+		return (0xA + c - 'a');
+	else
+		return (-1);
+}
+
+/**
+ *
+ */
 char *encode_hex(const char *data, size_t len)
 {
 	char *tmp;
@@ -49,6 +64,26 @@ char *encode_hex(const char *data, size_t len)
 	{
 		*tmp++ = to_digit((data[i] >> 4) & 0xF);
 		*tmp++ = to_digit((data[i]     ) & 0xF);
+	}
+
+	return (gbuffer);
+}
+
+/**
+ *
+ */
+char *decode_hex(const char *data, size_t len)
+{
+	char *ptr;
+	int i;
+
+	increase_buffer(len);
+
+	for (i = 0, ptr = gbuffer; i < len * 2; i += 2, ptr++)
+	{
+		*ptr =  to_value(data[i]);
+		*ptr <<= 4;
+		*ptr |= to_value(data[i+1]);
 	}
 
 	return (gbuffer);

@@ -238,6 +238,9 @@ read_uart:
 	cmp al, MSG_READ_MEM    ; Read memory
 	je .state_start_read_memory
 
+	cmp al, MSG_WRITE_MEM   ; Write memory
+	je .state_start_write_memory
+
 	cmp al, MSG_SINGLE_STEP ; Single-step
 	je .state_start_single_step
 
@@ -247,14 +250,20 @@ read_uart:
 	cmp al, MSG_CTRLC       ; Ctrl-C/break
 	je .state_start_ctrlc
 
-	exit_int4               ; Unrecognized byte
+	maybe_exit_int4         ; Unrecognized byte
 
 	; Already inside a state, check which one
 	; and acts accordingly
 .check_other_states:
 	cmp byte [cs:state], STATE_READ_MEM
 	je .state_read_memory_params
-	exit_int4
+
+	cmp byte [cs:state], STATE_WRITE_MEM_PARAMS
+	je .state_write_memory_params
+
+	cmp byte [cs:state], STATE_WRITE_MEM
+	je .state_write_memory
+	maybe_exit_int4
 
 	; ---------------------------------------------
 	; Read memory operations
@@ -266,7 +275,7 @@ read_uart:
 .state_start_read_memory:
 	mov byte [cs:byte_counter], 0
 	mov byte [cs:state], STATE_READ_MEM
-	exit_int4
+	maybe_exit_int4
 
 	;
 	; Obtain memory address to be read
@@ -280,7 +289,7 @@ read_uart:
 	; Check if we read everything
 	cmp byte [cs:byte_counter], 6
 	je  .state_read_memory
-	exit_int4
+	maybe_exit_int4
 
 	;
 	; Read memory
@@ -307,7 +316,72 @@ read_uart:
 
 	; Reset our state
 	mov byte [cs:state], STATE_DEFAULT
-	exit_int4
+	maybe_exit_int4
+
+	; ---------------------------------------------
+	; Write memory operations
+	; ---------------------------------------------
+
+	;
+	; Start of state
+	;
+.state_start_write_memory:
+	mov byte  [cs:byte_counter],  0
+	mov word  [cs:read_mem_size], 0
+	mov dword [cs:read_mem_addr], 0
+	mov byte [cs:state], STATE_WRITE_MEM_PARAMS
+	maybe_exit_int4
+
+	;
+	; Obtain memory address to be written
+	;
+.state_write_memory_params:  ; params = address (4-bytes LE) +
+	; Save new byte read                size (2-bytes LE)
+	movzx bx, byte [cs:byte_counter]
+	mov   byte [cs:read_mem_params+bx], al
+	inc   byte [cs:byte_counter]
+
+	; Check if we read everything
+	cmp byte [cs:byte_counter], 6
+	jne .exit
+	mov byte [cs:state], STATE_WRITE_MEM
+	maybe_exit_int4
+
+	.exit:
+		maybe_exit_int4
+
+	;
+	; Write memory
+	;
+.state_write_memory:
+	mov eax, dword [cs:read_mem_addr]
+	call phys_to_seg
+
+	; SEG:OFF
+	mov ds, ax
+	mov si, bx
+
+	; Write
+	mov al, byte [cs:byte_read]
+	mov byte [ds:si], al
+
+	; Increment phys address
+	inc dword [cs:read_mem_addr]
+
+	; Decrement and check
+	dec word [cs:read_mem_size]
+	jz .end
+	maybe_exit_int4
+
+.end:
+	; Reset state
+	mov byte [cs:state], STATE_DEFAULT
+
+	; Send an 'OK'
+	mov bl, MSG_OK
+	call uart_write_byte
+	maybe_exit_int4
+
 
 	; ---------------------------------------------
 	; Single-step
@@ -368,7 +442,7 @@ read_uart:
 	jmp handler_int1_send ; Jump to our int1 handler as if
 	                      ; we're dealing with a single-step
 
-.exit:
+exit_int4:
 	pop_regs
 	iret
 

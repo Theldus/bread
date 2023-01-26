@@ -19,10 +19,12 @@ static int serial_fd;
 #define GDB_STATE_CSUM_D2 0x8
 
 /* Serial handle states. */
-#define SERIAL_STATE_START        0x10
-#define SERIAL_STATE_SS           0xC8
-#define SERIAL_STATE_READ_MEM_CMD 0xD8
-#define SERIAL_STATE_CONTINUE     0xE8
+#define SERIAL_STATE_START         0x10
+#define SERIAL_STATE_SS            0xC8
+#define SERIAL_STATE_READ_MEM_CMD  0xD8
+#define SERIAL_STATE_CONTINUE      0xE8
+#define SERIAL_STATE_WRITE_MEM_CMD 0xF8
+#define SERIAL_MSG_OK              0x04
 
 //#define USE_MOCKS
 
@@ -164,6 +166,13 @@ static inline void send_gdb_ack(void) {
  */
 static inline void send_gdb_unsupported_msg(void) {
 	send_gdb_cmd(NULL, 0);
+}
+
+/**
+ *
+ */
+static inline void send_gdb_ok(void) {
+	send_gdb_cmd("OK", 2);
 }
 
 /**
@@ -391,6 +400,59 @@ already_physical:
 	return (0);
 }
 
+/**
+ *
+ */
+static int handle_gdb_write_memory_hex(const char *buff, size_t len)
+{
+	const char *ptr, *end, *memory;
+	uint32_t addr, amnt;
+	union minibuf mb;
+
+	ptr = buff;
+
+	/* Skip first 'X'. */
+	ptr++;
+	len--;
+
+	/* Get base address. */
+	addr = str2hex(ptr, len, &end);
+	if (*end != ',')
+		errw("Expected ',' got '%c'\n", *end);
+
+	end++;
+
+	/* Get amount. */
+	len -= (end - ptr + 1);
+	amnt = str2hex(end, len, &end);
+	if (*end != ':')
+		errw("Expected ':' got '%c'\n", *end);
+
+	/* If 0, just send that we support X command and quit. */
+	if (!amnt)
+	{
+		send_gdb_ok();
+		return (0);
+	}
+
+	end++;
+
+	/* Decode hex buffer to binary. */
+	memory = decode_hex(end, amnt);
+
+	/* Send to our serial device. */
+	mb.b8[0]  = SERIAL_STATE_WRITE_MEM_CMD;
+	send_all(serial_fd, &mb.b8[0],  sizeof mb.b8[0],  0);
+	mb.b32    = addr;
+	send_all(serial_fd, &mb.b32,    sizeof mb.b32,    0);
+	mb.b16[0] = amnt;
+	send_all(serial_fd, &mb.b16[0], sizeof mb.b16[0], 0);
+	send_all(serial_fd, memory,     amnt,             0);
+
+	return (0);
+}
+
+/**/
 struct gdb_handle
 {
 	int  state;
@@ -398,7 +460,7 @@ struct gdb_handle
 	int  cmd_idx;
 	char buff[32];
 	char csum_read[3];
-	char cmd_buff[64];
+	char cmd_buff[512];
 } gdb_handle = {
 	.state = GDB_STATE_START
 };
@@ -442,7 +504,13 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 		break;
 	/* Read memory. */
 	case 'm':
-		handle_gdb_read_memory(gh->cmd_buff, sizeof gh->cmd_buff);
+		handle_gdb_read_memory(gh->cmd_buff,
+			sizeof gh->cmd_buff);
+		break;
+	/* Memory write hex. */
+	case 'M':
+		handle_gdb_write_memory_hex(gh->cmd_buff,
+			sizeof gh->cmd_buff);
 		break;
 	/* Halt reason. */
 	case '?':
@@ -525,9 +593,10 @@ static inline void handle_gdb_state_cmd(struct gdb_handle *gh,
 	}
 	gh->csum += curr_byte;
 
-	/* Just ignore if command exceeds buffer size. */
+	/* Emit a warning if command exceeds buffer size. */
 	if (gh->cmd_idx > sizeof gh->cmd_buff - 2)
-		return;
+		errx("Command exceeds buffer size (%zu): %s\n",
+			gh->cmd_buff, sizeof gh->cmd_buff);
 
 	gh->cmd_buff[gh->cmd_idx++] = curr_byte;
 }
@@ -723,6 +792,8 @@ static void handle_serial_state_start(struct serial_handle *sh,
 		sh->state   = SERIAL_STATE_READ_MEM_CMD;
 		sh->buff_idx = 0;
 	}
+	else if (curr_byte == SERIAL_MSG_OK)
+		send_gdb_ok();
 }
 
 static void handle_serial_state_ss(struct serial_handle *sh,

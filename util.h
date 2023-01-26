@@ -29,6 +29,7 @@
 		} while (0)
 
 	extern char *encode_hex(const char *data, size_t len);
+	extern char *decode_hex(const char *data, size_t len);
 	extern uint32_t str2hex(const char *buff, size_t len,
 		const char **endptr);
 

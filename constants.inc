@@ -35,16 +35,16 @@
 	call uart_write_byte
 %endmacro
 
-%macro exit_int4 0
+%macro maybe_exit_int4 0
 	%ifndef UART_POLLING
-		jmp .exit
+		jmp exit_int4
 	%else
 		jmp read_uart
 	%endif
 %endmacro
 %macro true_exit_int4 0
 	%ifndef UART_POLLING
-		jmp .exit
+		jmp exit_int4
 	%else
 		jmp exit_int1
 	%endif
@@ -151,9 +151,13 @@ STOP_OPC equ 0x90fdebf4 ; (f4) (eb fd) (90)
 MSG_SINGLE_STEP      equ 0xC8
 MSG_READ_MEM         equ 0xD8
 MSG_CONTINUE         equ 0xE8
+MSG_WRITE_MEM        equ 0xF8
 MSG_CTRLC            equ 0x03
+MSG_OK               equ 0x04
 
 ; States
 ; ------
-STATE_DEFAULT         equ 0x01 ; Waits for a new command
-STATE_READ_MEM        equ 0x02 ; Read memory state
+STATE_DEFAULT           equ 0x01 ; Waits for a new command
+STATE_READ_MEM          equ 0x02 ; Read memory state
+STATE_WRITE_MEM         equ 0X03 ; Write memory state
+STATE_WRITE_MEM_PARAMS  equ 0x04 ; Write memory params state
