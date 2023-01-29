@@ -8,6 +8,8 @@
 
 #define DUMP_REGS 1
 
+#define TO_PHYS(S,O) (((S) << 4)+(O))
+
 /**/
 static int gdb_fd;
 static int serial_fd;
@@ -20,6 +22,8 @@ static int serial_fd;
 
 /* Serial handle states. */
 #define SERIAL_STATE_START         0x10
+#define SERIAL_STATE_ADD_SW_BREAK  0xA8
+#define SERIAL_STATE_REM_SW_BREAK  0xB8
 #define SERIAL_STATE_SS            0xC8
 #define SERIAL_STATE_READ_MEM_CMD  0xD8
 #define SERIAL_STATE_CONTINUE      0xE8
@@ -35,6 +39,11 @@ static int have_x86_regs = 0;
 static uint8_t *dump_buffer;
 static uint32_t last_dump_phys_addr;
 static uint16_t last_dump_amnt;
+
+/* Breakpoint cache. */
+static uint32_t breakpoint_insn_addr;
+static int single_step_before_continue;
+
 
 #ifndef UART_POLLING
 static uint8_t saved_insns[4];
@@ -120,6 +129,10 @@ static union ux86_regs
 	uint8_t r8[sizeof (struct sx86_regs)];
 } x86_regs;
 
+/* ------------------------------------------------------------------*
+ * GDB commands                                                      *
+ * ------------------------------------------------------------------*/
+
 /**
  *
  */
@@ -185,6 +198,10 @@ static void send_serial_ctrlc(void)
 	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
 }
 
+/* ------------------------------------------------------------------*
+ * Misc                                                              *
+ * ------------------------------------------------------------------*/
+
 /**
  *
  */
@@ -240,6 +257,55 @@ static char *read_mock_memory(size_t len)
 }
 #endif
 
+/**
+ *
+ */
+static uint32_t get_current_eip_phys(void) {
+	return TO_PHYS(x86_regs.r.cs, x86_regs.r.eip);
+}
+
+
+/**
+ * @brief Attempts to convert a passed address from GDB
+ * to its physical counterpart.
+ *
+ * Since GDB does not know anything about SEG:OFF
+ * the address passed through EIP is 'wrong'. This
+ * function attempts to convert the given address
+ * and then check if its similar to the current
+ * SEG:OFF EIP, if so, the address probably is
+ * physical
+ *
+ * @param addr Maybe not-physical address to be
+ *             converted.
+ *
+ * @return Returns the same address, or the physical
+ * converted address.
+ *
+ */
+static uint32_t to_physical(uint32_t addr)
+{
+	uint32_t phys1, phys2;
+	uint32_t ret;
+
+	ret = addr;
+
+	/*
+	 * Check if instruction is greater than threshold.
+	 *  512 bytes is just a guesstimate....
+	 */
+	phys1 = TO_PHYS(x86_regs.r.cs, addr);
+	phys2 = get_current_eip_phys();
+
+	if (ABS((int32_t)phys1 - (int32_t)phys2) >= 512)
+		goto already_physical;
+
+	ret = phys1;
+
+already_physical:
+	return (ret);
+}
+
 /* ------------------------------------------------------------------*
  * GDB handlers                                                      *
  * ------------------------------------------------------------------*/
@@ -266,14 +332,48 @@ static void handle_gdb_single_step(void)
 /**
  *
  */
-static void handle_gdb_continue(void)
+static void send_gdb_continue(void)
 {
 	union minibuf mb;
+	have_x86_regs = 0;
+	single_step_before_continue = 0;
+	mb.b8[0] = SERIAL_STATE_CONTINUE;
+	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+}
+
+/**
+ *
+ */
+static void handle_gdb_continue(void)
+{
+	/*
+	 * Check if we should single-step first:
+	 *
+	 * If we are currently at the same address where we add the
+	 * breakpoint, we are in a dilemma, because how are we going
+	 * to execute the code if the break is the current code
+	 * itself?
+	 *
+	 * GDB catches on to this and issues a single-step before
+	 * the continue, which effectively solves the problem,
+	 * right? almost. GDB assumes linear memory and is unaware
+	 * of segment:offset, so it cannot compare a physical address
+	 * with the current CS+EIP and thus does not issue the
+	 * necessary single-step.
+	 *
+	 * To get around this, we need to mimic what GDB does, and
+	 * silently issue a single-step on its own before proceeding
+	 * with continue.
+	 */
+	if (breakpoint_insn_addr == get_current_eip_phys())
+	{
+		single_step_before_continue = 1;
+		handle_gdb_single_step();
+		return;
+	}
 
 	/* Send to our serial-line that we want to continue. */
-	mb.b8[0]  = SERIAL_STATE_CONTINUE;
-	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
-	have_x86_regs = 0;
+	send_gdb_continue();
 }
 
 /**
@@ -298,9 +398,8 @@ static int handle_gdb_read_memory(const char *buff, size_t len)
 {
 	const char* end;
 	const char *ptr;
-	uint32_t addr, amnt;
-	uint32_t phys1, phys2;
 	union minibuf mb;
+	uint32_t addr, amnt;
 
 	ptr = buff;
 
@@ -345,20 +444,8 @@ static int handle_gdb_read_memory(const char *buff, size_t len)
 	 *       from the stack, think about that later.
 	 */
 
-	/*
-	 * Check if instruction is greater than threshold.
-	 *  512 bytes is just a guesstimate....
-	 */
-	phys1 = (x86_regs.r.cs << 4) + addr;
-	phys2 = (x86_regs.r.cs << 4) + x86_regs.r.eip;
-
-	if (ABS((int32_t)phys1 - (int32_t)phys2) >= 512)
-		goto already_physical;
-
 	/* Convert to physical. */
-	addr = phys1;
-
-already_physical:
+	addr = to_physical(addr);
 	last_dump_phys_addr = addr;
 	last_dump_amnt = amnt;
 
@@ -452,6 +539,63 @@ static int handle_gdb_write_memory_hex(const char *buff, size_t len)
 	return (0);
 }
 
+/**
+ *
+ */
+static int handle_gdb_add_sw_breakpoint(const char *buff, size_t len)
+{
+	const char *ptr, *end, *memory;
+	uint32_t addr, amnt;
+	union minibuf mb;
+	uint32_t phys1, phys2;
+
+	/* Skip 'Z0'. */
+	ptr  = buff;
+	ptr += 2;
+	len -= 2;
+
+	if (*ptr != ',')
+		errw("Expected ',' got '%c'\n", *end);
+
+	ptr++;
+	len--;
+
+	/* Get breakpoint address. */
+	addr = str2hex(ptr, len, &end);
+	if (*end != ',')
+		errw("Expected ',' got '%c'\n", *end);
+
+	/* Maybe convert to physical, if not already, */
+	addr = to_physical(addr);
+	breakpoint_insn_addr = addr;
+
+	/* Send to our serial device. */
+	mb.b8[0]  = SERIAL_STATE_ADD_SW_BREAK;
+	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+	mb.b32    = breakpoint_insn_addr;
+	send_all(serial_fd, &mb.b32,   sizeof mb.b32,   0);
+
+	printf(">>> break address: %x <<<<<<<<<\n", addr);
+	return (0);
+}
+
+/**
+ *
+ */
+static int handle_gdb_remove_sw_breakpoint(const char *buff, size_t len)
+{
+	union minibuf mb;
+
+	((void)buff); /* Only support 1 sw break at the moment. */
+	((void)len);
+
+	breakpoint_insn_addr = 0;
+
+	/* Send to our serial device. */
+	mb.b8[0] = SERIAL_STATE_REM_SW_BREAK;
+	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+}
+
 /**/
 struct gdb_handle
 {
@@ -523,6 +667,22 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 	/* Continue. */
 	case 'c':
 		handle_gdb_continue();
+		break;
+	/* Insert breakpoint. */
+	case 'Z':
+		if (gh->cmd_buff[1] == '0')
+			handle_gdb_add_sw_breakpoint(gh->cmd_buff,
+			sizeof gh->cmd_buff);
+		else
+			send_gdb_unsupported_msg();
+		break;
+	/* Remove breakpoint. */
+	case 'z':
+		if (gh->cmd_buff[1] == '0')
+			handle_gdb_remove_sw_breakpoint(gh->cmd_buff,
+			sizeof gh->cmd_buff);
+		else
+			send_gdb_unsupported_msg();
 		break;
 	/* Not-supported messages. */
 	default:
@@ -735,11 +895,17 @@ static void handle_serial_single_step_stop(struct srm_x86_regs *x86_rm)
 		printf("Single-stepped, you can now connect GDB!\n");
 
 	/*
-	 * If there is a valid connection already, tell GDB
-	 * that we're already stopped.
+	 * If there is a valid connection already:
+	 * - Check if this a 'silent' single-step
+	     (see handle_gdb_add_sw_breakpoint() for more info)
+	 *
+	 * Otherwise, tell GDB that we're already stopped.
 	 */
+	else if (single_step_before_continue)
+		send_gdb_continue();
 	else
 		send_gdb_halt_reason();
+
 
 #ifdef DUMP_REGS
 	printf("eax: 0x%x\n", x86_regs.r.eax);

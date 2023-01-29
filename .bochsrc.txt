@@ -1,4 +1,5 @@
 megs: 16
+cpu: model=p4_willamette
 romimage: file="/usr/share/bochs/BIOS-bochs-latest"
 vgaromimage: file="/usr/share/bochs/VGABIOS-lgpl-latest"
 floppya: 1_44="bootable.img", status=inserted

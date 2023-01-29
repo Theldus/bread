@@ -79,20 +79,38 @@ _start:
 .exit:
 	; Enable TF and IF in backup flags
 	mov bp, sp
-	or word [bp+2], 1<<8 ; TF
+	or word [bp+2], EFLAGS_TF ; TF
 %ifndef UART_POLLING
-	or word [bp+2], 1<<9 ; IF
+	or word [bp+2], EFLAGS_IF ; IF
 %endif
+
+	xor eax, eax
 
 	; Enable TF right now too
 	pushf
 	mov bp, sp
-	or word [bp], 1<<8
+	or word [bp], EFLAGS_TF
 	popf
 
+label:
 	; Original instructions here
 	nop
 	nop
+	nop
+	xchg dx, dx
+	mov eax, eax
+	mov ebx, ebx
+	nop
+	nop
+	nop
+	inc eax
+	nop
+	nop
+	xchg cx, cx
+	nop
+	xchg dx, dx
+	jmp label
+	xchg dx, dx
 
 	; Return from caller/BIOS
 	pop ds
@@ -183,6 +201,16 @@ handler_int1_send:
 	mov byte [cs:should_step], 0
 %endif
 
+	; Disable breakpoints
+	call disable_hw_breakpoints
+
+%ifndef UART_POLLING
+	; Disable TF because we shouldn't trigger a SS-trap
+	; for hlt or jmp
+	mov bp, sp
+	and word [ss:bp+EFLAGS_OFF], ~EFLAGS_TF
+%endif
+
 %ifdef UART_POLLING
 	jmp read_uart
 %endif
@@ -250,7 +278,13 @@ read_uart:
 	cmp al, MSG_CTRLC       ; Ctrl-C/break
 	je .state_start_ctrlc
 
-	maybe_exit_int4         ; Unrecognized byte
+	cmp al, MSG_ADD_SW_BREAK ; Add 'software' breakpoint
+	je .state_start_add_sw_break
+
+	cmp al, MSG_REM_SW_BREAK ; Remove 'sw' breakpoint
+	je .state_start_rem_sw_break
+
+	maybe_exit_int4          ; Unrecognized byte
 
 	; Already inside a state, check which one
 	; and acts accordingly
@@ -263,6 +297,10 @@ read_uart:
 
 	cmp byte [cs:state], STATE_WRITE_MEM
 	je .state_write_memory
+
+	cmp byte [cs:state], STATE_SW_BREAKPOINT
+	je .state_sw_break_params
+
 	maybe_exit_int4
 
 	; ---------------------------------------------
@@ -417,6 +455,10 @@ read_uart:
 .check_continue:
 	mov bp, sp
 
+	; Set TF as it might be disabled from a previous
+	; continue
+	or word [ss:bp+EFLAGS_OFF], EFLAGS_TF
+
 	; Check if we should disable single-step or not
 	; i.e: if we are in a continue message
 	cmp byte [cs:byte_read], MSG_CONTINUE
@@ -424,11 +466,14 @@ read_uart:
 
 	; Clear the 'TF' flag of our EFLAGS, and
 	; everything should be fine
-	and word [ss:bp+EFLAGS_OFF], ~(1<<8)
+	and word [ss:bp+EFLAGS_OFF], ~EFLAGS_TF
 
 .not_continue:
 	; Reset our state
 	mov byte [cs:state], STATE_DEFAULT
+
+	; Enable (or not) breakpoints
+	call enable_hw_breakpoints
 	true_exit_int4
 
 	; ---------------------------------------------
@@ -441,6 +486,81 @@ read_uart:
 .state_start_ctrlc:
 	jmp handler_int1_send ; Jump to our int1 handler as if
 	                      ; we're dealing with a single-step
+
+	; ---------------------------------------------
+	; Add 'software' breakpoint
+	; ---------------------------------------------
+
+	; Note: Although this is expected to be a sw reakpoint,
+	; the breakpoints used here are hardware breakpoints
+	; instead. This was chosen because there would be some
+	; complications with int3 and the interrupt-based approach,
+	; since this approach overwrites the memory too.
+	;
+	; In order to make things easier, I opted to use hw
+	; breakpoints =)
+
+	;
+	; Start of state
+	;
+.state_start_add_sw_break:
+	mov byte [cs:byte_counter], 0
+	mov byte [cs:state], STATE_SW_BREAKPOINT
+	maybe_exit_int4
+
+	;
+	; Obtain memory address to break
+	; Params:
+	;   phys address, 4-bytes, LE
+	;
+.state_sw_break_params:
+	; Save new byte read
+	movzx bx, byte [cs:byte_counter]
+	mov   byte [cs:read_mem_params+bx], al
+	inc   byte [cs:byte_counter]
+
+	; Check if we read everything
+	cmp byte [cs:byte_counter], 4
+	je  .state_sw_breakpoint
+	maybe_exit_int4
+
+	;
+	; Software breapoint
+	;
+.state_sw_breakpoint:
+	mov eax, dword [cs:read_mem_addr]
+	mov DR0, eax
+
+	; Reset state
+	mov byte [cs:state], STATE_DEFAULT
+
+	; Send an 'OK'
+	mov bl, MSG_OK
+	call uart_write_byte
+	maybe_exit_int4
+
+	; ---------------------------------------------
+	; Remove 'software' breakpoint
+	; ---------------------------------------------
+
+	;
+	; Start of state
+	;
+.state_start_rem_sw_break:
+	; Since we only support 1 instruction breakpoint
+	; we only remove that...
+	xor eax, eax
+	mov DR0, eax
+	call disable_hw_breakpoints
+
+	; Reset state
+	mov byte [cs:state], STATE_DEFAULT
+
+	; Send an 'OK'
+	mov bl, MSG_OK
+	call uart_write_byte
+	maybe_exit_int4
+
 
 exit_int4:
 	pop_regs
@@ -597,6 +717,67 @@ send_regs:
 
 	ret
 
+;
+; Disable breakpoints and reset DR6
+; Parameters:
+;   none
+;
+disable_hw_breakpoints:
+	; Reset DR6
+	mov eax, DR6
+	and al,  0xF0
+	mov DR6, eax
+	; Disable LE0
+	mov eax, DR7
+	xor al,  al
+	mov DR7, eax
+	ret
+
+;
+; Enable breakpoints and reset DR6
+; Parameters:
+;   none
+;
+; Note: This function assumes that the stack
+; follows the layout that 'push_regs' leave,
+; ie:
+;   Stack:
+;     ret_addr/eip (from this function)
+;     push_regs
+;
+enable_hw_breakpoints:
+	; Reset DR6
+	mov eax, DR6
+	and al,  0xF0
+	mov DR6, eax
+
+	; Get phys addr
+	mov   bp,  sp
+	add   bp,  2
+	movzx eax, word [ss:bp+CS_OFF]
+	shl   eax, 4
+	movzx ebx, word [ss:bp+EIP_OFF]
+	add   eax, ebx ; Current physical address
+
+	; Check if there is something First
+	mov ebx, DR0
+	cmp ebx, 0
+	jz  .not_enable
+
+	;
+	; Compare current addr with break addr
+	; if the same, if shouldn't enable it!
+	; otherwise, thats no problem =)
+	;
+	cmp eax, ebx
+	mov eax, DR7_LE_GE_L0 ; Enabled
+	jne .enable
+.not_enable:
+	mov eax, DR7_LE_GE    ; Disabled
+.enable:
+	mov DR7, eax
+.exit:
+	ret
 
 ; --------------------------------
 ; Data

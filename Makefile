@@ -45,7 +45,7 @@ bochs: bootable.img
 	bochs -q -f .bochsrc.txt
 qemu: bootable.img
 	qemu-system-i386 -boot a -fda bootable.img \
-		-serial tcp:127.0.0.1:2345 -display none -gdb tcp::5678
+		-serial tcp:127.0.0.1:2345 -gdb tcp::5678 --enable-kvm
 
 
 clean:

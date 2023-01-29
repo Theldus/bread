@@ -71,6 +71,13 @@
 ; Constants
 ; --------------------------------
 
+; Misc
+; ----
+EFLAGS_TF    equ (1<<8)
+EFLAGS_IF    equ (1<<9)
+DR7_LE_GE    equ 0x700
+DR7_LE_GE_L0 equ 0x701
+
 ; Register offsets (push_regs/pop_regs)
 ; -------------------------------------
 GS_OFF     equ 0
@@ -148,6 +155,8 @@ STOP_OPC equ 0x90fdebf4 ; (f4) (eb fd) (90)
 ; ---------------
 
 ; The machine has stopped in single-step mode!
+MSG_ADD_SW_BREAK     equ 0xA8
+MSG_REM_SW_BREAK     equ 0xB8
 MSG_SINGLE_STEP      equ 0xC8
 MSG_READ_MEM         equ 0xD8
 MSG_CONTINUE         equ 0xE8
@@ -161,3 +170,4 @@ STATE_DEFAULT           equ 0x01 ; Waits for a new command
 STATE_READ_MEM          equ 0x02 ; Read memory state
 STATE_WRITE_MEM         equ 0X03 ; Write memory state
 STATE_WRITE_MEM_PARAMS  equ 0x04 ; Write memory params state
+STATE_SW_BREAKPOINT     equ 0x05 ; SW breakpoint state
