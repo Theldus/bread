@@ -199,11 +199,8 @@ static inline void send_gdb_error(void) {
 /**
  *
  */
-static void send_serial_ctrlc(void)
-{
-	union minibuf mb;
-	mb.b8[0] = 3;
-	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+static void send_serial_ctrlc(void) {
+	send_serial_byte(3);
 }
 
 /* ------------------------------------------------------------------*
@@ -327,12 +324,8 @@ static void handle_gdb_single_step(void)
 #ifdef USE_MOCKS
 	send_gdb_halt_reason();
 #else
-	union minibuf mb;
-
 	/* Send to our serial-line that we want a single-step. */
-	mb.b8[0]  = SERIAL_STATE_SS;
-	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
-
+	send_serial_byte(SERIAL_STATE_SS);
 	have_x86_regs = 0;
 #endif
 }
@@ -342,11 +335,9 @@ static void handle_gdb_single_step(void)
  */
 static void send_gdb_continue(void)
 {
-	union minibuf mb;
 	have_x86_regs = 0;
 	single_step_before_continue = 0;
-	mb.b8[0] = SERIAL_STATE_CONTINUE;
-	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+	send_serial_byte(SERIAL_STATE_CONTINUE);
 }
 
 /**
@@ -404,27 +395,18 @@ static void handle_gdb_read_registers(void) {
  */
 static int handle_gdb_read_memory(const char *buff, size_t len)
 {
-	const char* end;
 	const char *ptr;
-	union minibuf mb;
 	uint32_t addr, amnt;
 
 	ptr = buff;
 
 	/* Skip first 'm'. */
-	ptr++;
-	len--;
-
-	/* Get base address. */
-	addr = str2hex(ptr, len, &end);
-	if (*end != ',')
-		errw("Expected ',' got '%c'\n", *end);
-
-	end++;
+	expect_char('m', ptr, len);
+	addr = read_int(ptr, &len, &ptr);
+	expect_char(',', ptr, len);
 
 	/* Get amount. */
-	len -= (end - ptr + 1);
-	amnt = str2hex(end, len, NULL);
+	amnt = simple_read_int(ptr, len);
 
 	/*
 	 * Reading memory is tricky: GDB does not know
@@ -471,12 +453,9 @@ static int handle_gdb_read_memory(const char *buff, size_t len)
 	 * 0xD8 <address-4-bytes-LE> <size-2-bytes-LE>
 	 *  ^--- read memory command, 1-byte
 	 */
-	mb.b8[0]  = SERIAL_STATE_READ_MEM_CMD;
-	send_all(serial_fd, &mb.b8[0],  sizeof mb.b8[0],  0);
-	mb.b32    = addr;
-	send_all(serial_fd, &mb.b32,    sizeof mb.b32,    0);
-	mb.b16[0] = amnt;
-	send_all(serial_fd, &mb.b16[0], sizeof mb.b16[0], 0);
+	send_serial_byte(SERIAL_STATE_READ_MEM_CMD);
+	send_serial_dword(addr);
+	send_serial_word(amnt);
 
 	/*
 	 * For serial, we do not answer immediately, instead,
@@ -500,28 +479,19 @@ static int handle_gdb_read_memory(const char *buff, size_t len)
  */
 static int handle_gdb_write_memory_hex(const char *buff, size_t len)
 {
-	const char *ptr, *end, *memory;
+	const char *ptr, *memory;
 	uint32_t addr, amnt;
-	union minibuf mb;
 
 	ptr = buff;
 
-	/* Skip first 'X'. */
-	ptr++;
-	len--;
-
-	/* Get base address. */
-	addr = str2hex(ptr, len, &end);
-	if (*end != ',')
-		errw("Expected ',' got '%c'\n", *end);
-
-	end++;
+	/* Skip first 'M'. */
+	expect_char('M', ptr, len);
+	addr = read_int(ptr, &len, &ptr);
+	expect_char(',', ptr, len);
 
 	/* Get amount. */
-	len -= (end - ptr + 1);
-	amnt = str2hex(end, len, &end);
-	if (*end != ':')
-		errw("Expected ':' got '%c'\n", *end);
+	amnt = read_int(ptr, &len, &ptr);
+	expect_char(':', ptr, len);
 
 	/* If 0, just send that we support X command and quit. */
 	if (!amnt)
@@ -530,20 +500,14 @@ static int handle_gdb_write_memory_hex(const char *buff, size_t len)
 		return (0);
 	}
 
-	end++;
-
 	/* Decode hex buffer to binary. */
-	memory = decode_hex(end, amnt);
+	memory = decode_hex(ptr, amnt);
 
 	/* Send to our serial device. */
-	mb.b8[0]  = SERIAL_STATE_WRITE_MEM_CMD;
-	send_all(serial_fd, &mb.b8[0],  sizeof mb.b8[0],  0);
-	mb.b32    = addr;
-	send_all(serial_fd, &mb.b32,    sizeof mb.b32,    0);
-	mb.b16[0] = amnt;
-	send_all(serial_fd, &mb.b16[0], sizeof mb.b16[0], 0);
-	send_all(serial_fd, memory,     amnt,             0);
-
+	send_serial_byte(SERIAL_STATE_WRITE_MEM_CMD);
+	send_serial_dword(addr);
+	send_serial_word(amnt);
+	send_all(serial_fd, memory, amnt, 0);
 	return (0);
 }
 
@@ -552,36 +516,25 @@ static int handle_gdb_write_memory_hex(const char *buff, size_t len)
  */
 static int handle_gdb_add_sw_breakpoint(const char *buff, size_t len)
 {
-	const char *ptr, *end, *memory;
-	uint32_t addr, amnt;
-	union minibuf mb;
-	uint32_t phys1, phys2;
+	const char *ptr = buff;
+	uint32_t addr;
 
 	/* Skip 'Z0'. */
-	ptr  = buff;
-	ptr += 2;
-	len -= 2;
-
-	if (*ptr != ',')
-		errw("Expected ',' got '%c'\n", *end);
-
-	ptr++;
-	len--;
+	expect_char('Z', ptr, len);
+	expect_char('0', ptr, len);
+	expect_char(',', ptr, len);
 
 	/* Get breakpoint address. */
-	addr = str2hex(ptr, len, &end);
-	if (*end != ',')
-		errw("Expected ',' got '%c'\n", *end);
+	addr = read_int(ptr, &len, &ptr);
+	expect_char(',', ptr, len);
 
 	/* Maybe convert to physical, if not already, */
 	addr = to_physical(addr);
 	breakpoint_insn_addr = addr;
 
 	/* Send to our serial device. */
-	mb.b8[0]  = SERIAL_STATE_ADD_SW_BREAK;
-	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
-	mb.b32    = breakpoint_insn_addr;
-	send_all(serial_fd, &mb.b32,   sizeof mb.b32,   0);
+	send_serial_byte(SERIAL_STATE_ADD_SW_BREAK);
+	send_serial_dword(breakpoint_insn_addr);
 	return (0);
 }
 
@@ -590,16 +543,13 @@ static int handle_gdb_add_sw_breakpoint(const char *buff, size_t len)
  */
 static int handle_gdb_remove_sw_breakpoint(const char *buff, size_t len)
 {
-	union minibuf mb;
-
 	((void)buff); /* Only support 1 sw break at the moment. */
 	((void)len);
 
 	breakpoint_insn_addr = 0;
 
 	/* Send to our serial device. */
-	mb.b8[0] = SERIAL_STATE_REM_SW_BREAK;
-	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+	send_serial_byte(SERIAL_STATE_REM_SW_BREAK);
 }
 
 /**
@@ -608,8 +558,8 @@ static int handle_gdb_remove_sw_breakpoint(const char *buff, size_t len)
 static int handle_gdb_write_register(const char *buff, size_t len)
 {
 	uint32_t reg_num_gdb, reg_num_rm;
-	const char *ptr, *end, *dec;
-	union minibuf value, mb;
+	const char *ptr, *dec;
+	union minibuf value;
 
 	static const int gdb_to_rm[] =
 		/* EAX. */                           /* GS. */
@@ -617,20 +567,11 @@ static int handle_gdb_write_register(const char *buff, size_t len)
 
 	ptr = buff;
 
-	/* Skip first 'P'. */
-	ptr++;
-	len--;
+	expect_char('P', ptr, len);
+	reg_num_gdb = read_int(ptr, &len, &ptr);
+	expect_char('=', ptr, len);
+	dec = decode_hex(ptr, 4);
 
-	/* Get reg num. */
-	reg_num_gdb = str2hex(ptr, len, &end);
-	if (*end != '=')
-		errw("Expected '=' got '%c'\n", *end);
-
-	end++;
-
-	/* Get value. */
-	len -= (end - ptr + 1);
-	dec  = decode_hex(end, 4);
 	memcpy(&value, dec, 4);
 
 	/* Validate register. */
@@ -656,12 +597,9 @@ static int handle_gdb_write_register(const char *buff, size_t len)
 	x86_regs.r32[reg_num_gdb] = value.b32;
 
 	/* Send to our serial device. */
-	mb.b8[0]  = SERIAL_STATE_REG_WRITE;
-	send_all(serial_fd, &mb.b8[0],  sizeof mb.b8[0], 0);
-	mb.b8[0]  = reg_num_rm;
-	send_all(serial_fd, &mb.b8[0],  sizeof mb.b8[0], 0);
-	mb.b32    = value.b32;
-	send_all(serial_fd, &mb.b32,    sizeof mb.b32,   0);
+	send_serial_byte(SERIAL_STATE_REG_WRITE);
+	send_serial_byte(reg_num_rm);
+	send_serial_dword(value.b32);
 	return (0);
 }
 
@@ -685,7 +623,7 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 {
 	int csum_chk;
 
-	csum_chk = (int) str2hex(gh->csum_read, 2, NULL);
+	csum_chk = (int) simple_read_int(gh->csum_read, 2);
 	if (csum_chk != gh->csum)
 		errw("Checksum for message: %s (%d) doesnt match: %d!\n",
 			gh->cmd_buff, csum_chk, gh->csum);

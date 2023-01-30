@@ -92,7 +92,7 @@ char *decode_hex(const char *data, size_t len)
 /**
  *
  */
-uint32_t str2hex(const char *buff, size_t len,
+uint32_t read_int(const char *buff, size_t *len,
 	const char **endptr)
 {
 	int32_t ret;
@@ -101,7 +101,7 @@ uint32_t str2hex(const char *buff, size_t len,
 
 	ret = 0;
 
-	for (int i = 0; i < len; i++)
+	for (int i = 0; i < *len; i++)
 	{
 		c = tolower(buff[i]);
 
@@ -112,7 +112,10 @@ uint32_t str2hex(const char *buff, size_t len,
 		else
 		{
 			if (endptr)
-				*endptr = buff+i;
+			{
+				*endptr = buff + i;
+				*len = *len - i;
+			}
 			goto out;
 		}
 		ret = ret * 16 + v;
@@ -120,4 +123,13 @@ uint32_t str2hex(const char *buff, size_t len,
 
 out:
 	return (ret);
+}
+
+/**
+ *
+ */
+uint32_t simple_read_int(const char *buf, size_t len)
+{
+	size_t l = len;
+	return read_int(buf, &l, NULL);
 }
