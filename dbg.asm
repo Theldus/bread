@@ -132,25 +132,34 @@ nop
 ;
 ;
 ; Stack order:
-; 0  GS --   <- TOP
-; 2  FS   \
-; 4  ES
-; 6  DS
-; 8  SS
-; 10 EDI
-; 14 ESI      \
-; 18 EBP       \
-; 22 ESP        | - Saved by us (32-bit each)
-; 26 EBX        |
-; 30 EDX       /
-; 34 ECX      /
-; 38 EAX    --
+; 00 EDI     ---    (TOP)
+; 04 ESI        |
+; 08 EBP        |
+; 12 ESP        | - Saved by us  (32-bit each)
+; 16 EBX        |
+; 20 EDX        |
+; 24 ECX        |
+; 28 EAX     ---
+; 32  GS     ---
+; 34  FS        |
+; 36  ES        | - Saved by us  (16-bit each)
+; 38  DS        |
+; 40  SS     ---
 ; 42 EIP     ---
-; 44 CS         |-- Saved for us (16-bit each)
+; 44 CS         | - Saved for us (16-bit each)
 ; 46 EFLAGS  ---
 ;
-; Obs: EIP points to the next (not-executed yet)
+;
+; Obs:
+; For Trap: EIP points to the next (not-executed yet)
 ; instruction!
+;
+; For Debug Exception:
+;   If Instruction: EIP points to the (not-executed yet)
+;   instruction.
+;
+;   If Data: EIP points to the next (not-executed yet)
+;   instruction
 ;
 handler_int1:
 
@@ -689,31 +698,24 @@ send_regs:
 
 	;
 	; Now we need to send our registers
-	; First: 16-bit regs: GS-SS
+	; First: 32-bit regs: EDI-EAX
 	;
 	mov ax, ss
 	mov ds, ax
 	mov si, sp
 	add si, 2   ; Ignores return address/EIP
-	mov cx, 5
-	.loop1:
-		lodsw
-		uart_write_word ax
-		loop .loop1
-
-	; Second: 32-bit regs: EDI-EAX
 	mov cx, 8
-	.loop2:
+	.loop1:
 		lodsd
 		uart_write_dword eax
-		loop .loop2
+		loop .loop1
 
-	; Third: 16-bit regs: EIP, CS, EFLAGS
-	mov cx, 3
-	.loop3:
+	; Second: 16-bit regs: GS-EFLAGS
+	mov cx, 8
+	.loop2:
 		lodsw
 		uart_write_word ax
-		loop .loop3
+		loop .loop2
 
 	ret
 

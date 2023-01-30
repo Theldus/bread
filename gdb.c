@@ -66,11 +66,6 @@ union minibuf
  */
 struct srm_x86_regs
 {
-	uint16_t gs;
-	uint16_t fs;
-	uint16_t es;
-	uint16_t ds;
-	uint16_t ss;
 	uint32_t edi;
 	uint32_t esi;
 	uint32_t ebp;
@@ -79,6 +74,11 @@ struct srm_x86_regs
 	uint32_t edx;
 	uint32_t ecx;
 	uint32_t eax;
+	uint16_t gs;
+	uint16_t fs;
+	uint16_t es;
+	uint16_t ds;
+	uint16_t ss;
 	uint16_t eip;
 	uint16_t cs;
 	uint16_t eflags;
@@ -877,9 +877,15 @@ static void handle_serial_single_step_stop(struct srm_x86_regs *x86_rm)
 	x86_regs.r.ecx = x86_rm->ecx;
 	x86_regs.r.edx = x86_rm->edx;
 	x86_regs.r.ebx = x86_rm->ebx;
-	x86_regs.r.esp = x86_rm->esp + 6; /* because we need to disconsider. */
-	x86_regs.r.ebp = x86_rm->ebp;     /* EFLAGS+CS+EIP that are already. */
-	x86_regs.r.esi = x86_rm->esi;     /* in the stack. */
+
+	/*
+	 * We need to disconsider the first 8 16-bit
+	 * registers already pushed in the stack.
+	 */
+	x86_regs.r.esp = x86_rm->esp + (2*8);
+
+	x86_regs.r.ebp = x86_rm->ebp;
+	x86_regs.r.esi = x86_rm->esi;
 	x86_regs.r.edi = x86_rm->edi;
 	x86_regs.r.eip = x86_rm->eip;
 	x86_regs.r.eflags = x86_rm->eflags;

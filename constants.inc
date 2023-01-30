@@ -51,20 +51,20 @@
 %endmacro
 
 %macro push_regs 0
-	pushad
 	push ss
 	push ds
 	push es
 	push fs
 	push gs
+	pushad
 %endmacro
 %macro pop_regs 0
+	popad
 	pop gs
 	pop fs
 	pop es
 	pop ds
 	pop ss
-	popad
 %endmacro
 
 ; --------------------------------
@@ -80,19 +80,19 @@ DR7_LE_GE_L0 equ 0x701
 
 ; Register offsets (push_regs/pop_regs)
 ; -------------------------------------
-GS_OFF     equ 0
-FS_OFF     equ 2
-ES_OFF     equ 4
-DS_OFF     equ 6
-SS_OFF     equ 8
-EDI_OFF    equ 10
-ESI_OFF    equ 14
-EBP_OFF    equ 18
-ESP_OFF    equ 22
-EBX_OFF    equ 26
-EDX_OFF    equ 30
-ECX_OFF    equ 34
-EAX_OFF    equ 38
+EDI_OFF    equ 0
+ESI_OFF    equ 4
+EBP_OFF    equ 8
+ESP_OFF    equ 12
+EBX_OFF    equ 16
+EDX_OFF    equ 20
+ECX_OFF    equ 24
+EAX_OFF    equ 28
+ GS_OFF    equ 32
+ FS_OFF    equ 34
+ ES_OFF    equ 36
+ DS_OFF    equ 38
+ SS_OFF    equ 40
 EIP_OFF    equ 42
 CS_OFF     equ 44
 EFLAGS_OFF equ 46
