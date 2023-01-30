@@ -163,6 +163,7 @@ MSG_CONTINUE         equ 0xE8
 MSG_WRITE_MEM        equ 0xF8
 MSG_CTRLC            equ 0x03
 MSG_OK               equ 0x04
+MSG_REG_WRITE        equ 0xA7
 
 ; States
 ; ------
@@ -171,3 +172,4 @@ STATE_READ_MEM          equ 0x02 ; Read memory state
 STATE_WRITE_MEM         equ 0X03 ; Write memory state
 STATE_WRITE_MEM_PARAMS  equ 0x04 ; Write memory params state
 STATE_SW_BREAKPOINT     equ 0x05 ; SW breakpoint state
+STATE_REG_WRITE_PARAMS  equ 0x06 ; Reg write parameters

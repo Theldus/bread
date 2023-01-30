@@ -272,28 +272,31 @@ read_uart:
 	; Accordingly with the byte received, decides
 	; which state we should move on
 .default_state:
-	cmp al, MSG_READ_MEM    ; Read memory
+	cmp al, MSG_READ_MEM      ; Read memory
 	je .state_start_read_memory
 
-	cmp al, MSG_WRITE_MEM   ; Write memory
+	cmp al, MSG_WRITE_MEM     ; Write memory
 	je .state_start_write_memory
 
-	cmp al, MSG_SINGLE_STEP ; Single-step
+	cmp al, MSG_SINGLE_STEP   ; Single-step
 	je .state_start_single_step
 
-	cmp al, MSG_CONTINUE    ; Continue
+	cmp al, MSG_CONTINUE      ; Continue
 	je .state_start_continue
 
-	cmp al, MSG_CTRLC       ; Ctrl-C/break
+	cmp al, MSG_CTRLC         ; Ctrl-C/break
 	je .state_start_ctrlc
 
-	cmp al, MSG_ADD_SW_BREAK ; Add 'software' breakpoint
+	cmp al, MSG_ADD_SW_BREAK  ; Add 'software' breakpoint
 	je .state_start_add_sw_break
 
-	cmp al, MSG_REM_SW_BREAK ; Remove 'sw' breakpoint
+	cmp al, MSG_REM_SW_BREAK  ; Remove 'sw' breakpoint
 	je .state_start_rem_sw_break
 
-	maybe_exit_int4          ; Unrecognized byte
+	cmp al, MSG_REG_WRITE
+	je .state_start_reg_write ; Write into register
+
+	maybe_exit_int4           ; Unrecognized byte
 
 	; Already inside a state, check which one
 	; and acts accordingly
@@ -309,6 +312,9 @@ read_uart:
 
 	cmp byte [cs:state], STATE_SW_BREAKPOINT
 	je .state_sw_break_params
+
+	cmp byte [cs:state], STATE_REG_WRITE_PARAMS
+	je .state_reg_write_params
 
 	maybe_exit_int4
 
@@ -570,6 +576,66 @@ read_uart:
 	call uart_write_byte
 	maybe_exit_int4
 
+	; ---------------------------------------------
+	; Register write operations
+	; ---------------------------------------------
+
+	;
+	; Start of state
+	;
+.state_start_reg_write:
+	mov byte [cs:byte_counter], 0
+	mov byte [cs:state], STATE_REG_WRITE_PARAMS
+	maybe_exit_int4
+
+	;
+	; Obtains register offset and value
+	;
+.state_reg_write_params:
+	; Save new byte read
+	movzx bx, byte [cs:byte_counter]
+	mov   byte [cs:read_mem_params+bx], al
+	inc   byte [cs:byte_counter]
+
+	; Check if we read everything
+	cmp byte [cs:byte_counter], 5
+	je  .state_reg_write
+	maybe_exit_int4
+
+	;
+	; Writes the read value to the appropriate
+	; register
+	;
+.state_reg_write:
+	; Read the register number and get its stack
+	; offset
+	xor ax,  ax
+	mov al,  [cs:first_param_byte]   ; reg number
+	mov ebx, [cs:second_param_dword] ; reg value
+	mov bp,  sp
+
+	cmp al, 8
+	jge .reg_is_16bit
+.reg_is_32bit:
+	shl al, 2
+	add bp, ax
+	mov dword [ss:bp], ebx
+	jmp .end_reg_write
+.reg_is_16bit:
+	sub al, 8  ; get zero-indexed
+	shl al, 1  ; get its offset
+	add al, 32 ; skip the first 8 32-bit regs
+	add bp, ax
+	mov word [ss:bp], bx
+.end_reg_write:
+	; Reset state
+	mov byte [cs:state], STATE_DEFAULT
+
+	; Send an 'OK'
+	mov bl, MSG_OK
+	call uart_write_byte
+	maybe_exit_int4
+
 
 exit_int4:
 	pop_regs
@@ -812,7 +878,10 @@ byte_counter:  ; Byte counter in a sequence of bytes read
 
 read_mem_params:
 read_mem_addr:
-	db 0,0,0,0
+first_param_byte:
+	db 0
+second_param_dword:
+	db 0,0,0
 read_mem_size:
 	db 0,0
 
@@ -820,10 +889,3 @@ read_mem_size:
 ; Strings
 ; --------------------------------
 str_idt_gt1MB_error: db 'IDT >= 1MB', 0
-
-
-
-; think: maybe do a polling approach, because the code,
-; besides the risks that already exist (with GDT,
-; protected mode, etc), can also disable interrupts
-; via 'cli', which would ruin the debugging!

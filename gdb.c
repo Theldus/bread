@@ -28,6 +28,7 @@ static int serial_fd;
 #define SERIAL_STATE_READ_MEM_CMD  0xD8
 #define SERIAL_STATE_CONTINUE      0xE8
 #define SERIAL_STATE_WRITE_MEM_CMD 0xF8
+#define SERIAL_STATE_REG_WRITE     0xA7
 #define SERIAL_MSG_OK              0x04
 
 //#define USE_MOCKS
@@ -186,6 +187,13 @@ static inline void send_gdb_unsupported_msg(void) {
  */
 static inline void send_gdb_ok(void) {
 	send_gdb_cmd("OK", 2);
+}
+
+/**
+ *
+ */
+static inline void send_gdb_error(void) {
+	send_gdb_cmd("E00", 3);
 }
 
 /**
@@ -574,8 +582,6 @@ static int handle_gdb_add_sw_breakpoint(const char *buff, size_t len)
 	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
 	mb.b32    = breakpoint_insn_addr;
 	send_all(serial_fd, &mb.b32,   sizeof mb.b32,   0);
-
-	printf(">>> break address: %x <<<<<<<<<\n", addr);
 	return (0);
 }
 
@@ -594,6 +600,69 @@ static int handle_gdb_remove_sw_breakpoint(const char *buff, size_t len)
 	/* Send to our serial device. */
 	mb.b8[0] = SERIAL_STATE_REM_SW_BREAK;
 	send_all(serial_fd, &mb.b8[0], sizeof mb.b8[0], 0);
+}
+
+/**
+ *
+ */
+static int handle_gdb_write_register(const char *buff, size_t len)
+{
+	uint32_t reg_num_gdb, reg_num_rm;
+	const char *ptr, *end, *dec;
+	union minibuf value, mb;
+
+	static const int gdb_to_rm[] =
+		/* EAX. */                           /* GS. */
+		   {7,6,5,4,3,2,1,0,13,15,14,12,11,10,9,8};
+
+	ptr = buff;
+
+	/* Skip first 'P'. */
+	ptr++;
+	len--;
+
+	/* Get reg num. */
+	reg_num_gdb = str2hex(ptr, len, &end);
+	if (*end != '=')
+		errw("Expected '=' got '%c'\n", *end);
+
+	end++;
+
+	/* Get value. */
+	len -= (end - ptr + 1);
+	dec  = decode_hex(end, 4);
+	memcpy(&value, dec, 4);
+
+	/* Validate register. */
+	if (reg_num_gdb >= 16)
+	{
+		send_gdb_error();
+		return (-1);
+	}
+
+	reg_num_rm = gdb_to_rm[reg_num_gdb];
+
+	/*
+	 * Validate value: 16-bit registers should not
+	 * receive values greater than 16-bit =)
+	 */
+	if (reg_num_rm >= 8 && value.b32 > ((1<<16)-1))
+	{
+		send_gdb_error();
+		return (-1);
+	}
+
+	/* Update our 'cache'. */
+	x86_regs.r32[reg_num_gdb] = value.b32;
+
+	/* Send to our serial device. */
+	mb.b8[0]  = SERIAL_STATE_REG_WRITE;
+	send_all(serial_fd, &mb.b8[0],  sizeof mb.b8[0], 0);
+	mb.b8[0]  = reg_num_rm;
+	send_all(serial_fd, &mb.b8[0],  sizeof mb.b8[0], 0);
+	mb.b32    = value.b32;
+	send_all(serial_fd, &mb.b32,    sizeof mb.b32,   0);
+	return (0);
 }
 
 /**/
@@ -683,6 +752,11 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 			sizeof gh->cmd_buff);
 		else
 			send_gdb_unsupported_msg();
+		break;
+	/* Write register. */
+	case 'P':
+		handle_gdb_write_register(gh->cmd_buff,
+			sizeof gh->cmd_buff);
 		break;
 	/* Not-supported messages. */
 	default:
