@@ -29,7 +29,17 @@ static int serial_fd;
 #define SERIAL_STATE_CONTINUE      0xE8
 #define SERIAL_STATE_WRITE_MEM_CMD 0xF8
 #define SERIAL_STATE_REG_WRITE     0xA7
+#define SERIAL_STATE_ADD_HW_WATCH  0xB7
+#define SERIAL_STATE_REM_HW_WATCH  0xC7
 #define SERIAL_MSG_OK              0x04
+
+/* Watch types. */
+#define HW_WATCH_WRITE  0x01
+#define HW_WATCH_ACCESS 0x03
+
+/* Stop reasons. */
+#define STOP_REASON_NORMAL      10
+#define STOP_REASON_WATCHPOINT  20
 
 //#define USE_MOCKS
 
@@ -44,11 +54,6 @@ static uint16_t last_dump_amnt;
 /* Breakpoint cache. */
 static uint32_t breakpoint_insn_addr;
 static int single_step_before_continue;
-
-
-#ifndef UART_POLLING
-static uint8_t saved_insns[4];
-#endif
 
 /**
  *
@@ -86,11 +91,19 @@ struct srm_x86_regs
 } __attribute__((packed));
 
 /**/
-union urm_x86_regs
+union x86_stop_data
 {
-	struct srm_x86_regs r;
-	uint8_t r8[sizeof (struct srm_x86_regs)];
-};
+	struct d
+	{
+		struct   srm_x86_regs x86_regs;
+		uint8_t  stop_reason;
+		uint32_t stop_addr;
+#ifndef UART_POLLING
+		uint8_t  saved_insns[4];
+#endif
+	} __attribute__((packed)) d;
+	uint8_t data[sizeof (struct d)];
+} x86_stop_data;
 
 /**
  * This is the struct that will be passed as-is to GDB
@@ -164,8 +177,26 @@ static ssize_t send_gdb_cmd(const char *buff, size_t len)
 /**
  *
  */
-static inline void send_gdb_halt_reason(void) {
-	send_gdb_cmd("S05", 3);
+static inline void send_gdb_halt_reason(void)
+{
+	char buf[32] = {0};
+
+	/* Instruction hw bp, Ctrl+C, or initial break. */
+	if (x86_stop_data.d.stop_reason == STOP_REASON_NORMAL)
+	{
+		send_gdb_cmd("S05", 3);
+		return;
+	}
+
+	/*
+	 * Hardware watchpoint
+	 * GDB requires another type of message, that tells
+	 * the stop reason and address.
+	 */
+	snprintf(buf, sizeof buf - 1, "T05watch:%08x;",
+		x86_stop_data.d.stop_addr);
+
+	send_gdb_cmd(buf, strlen(buf));
 }
 
 /**
@@ -514,14 +545,14 @@ static int handle_gdb_write_memory_hex(const char *buff, size_t len)
 /**
  *
  */
-static int handle_gdb_add_sw_breakpoint(const char *buff, size_t len)
+static int handle_gdb_add_breakpoint(const char *buff, size_t len)
 {
 	const char *ptr = buff;
 	uint32_t addr;
 
 	/* Skip 'Z0'. */
 	expect_char('Z', ptr, len);
-	expect_char('0', ptr, len);
+	expect_char_range('0', '4', ptr, len);
 	expect_char(',', ptr, len);
 
 	/* Get breakpoint address. */
@@ -530,26 +561,80 @@ static int handle_gdb_add_sw_breakpoint(const char *buff, size_t len)
 
 	/* Maybe convert to physical, if not already, */
 	addr = to_physical(addr);
-	breakpoint_insn_addr = addr;
 
-	/* Send to our serial device. */
-	send_serial_byte(SERIAL_STATE_ADD_SW_BREAK);
-	send_serial_dword(breakpoint_insn_addr);
+	/*
+	 * Check which type of breakpoint we have and act
+	 * accordingly.
+	 */
+	switch (buff[1]) {
+	/*
+	 * Instruction break,
+	 * Since we only support hw break anyway, 0 (sw) and
+	 * 1 (hw) will have the same meaning...
+	 */
+	case '0':
+	case '1':
+		breakpoint_insn_addr = addr;
+		send_serial_byte(SERIAL_STATE_ADD_SW_BREAK);
+		send_serial_dword(breakpoint_insn_addr);
+		break;
+	/* Write watchpoint. */
+	case '2':
+		send_serial_byte(SERIAL_STATE_ADD_HW_WATCH);
+		send_serial_byte(HW_WATCH_WRITE);
+		send_serial_dword(addr);
+		break;
+	/* Read watchpoint. */
+	case '3':
+		send_gdb_unsupported_msg();
+		break;
+	/* Access (Read/Write) watchpoint. */
+	case '4':
+		send_serial_byte(SERIAL_STATE_ADD_HW_WATCH);
+		send_serial_byte(HW_WATCH_ACCESS);
+		send_serial_dword(addr);
+		break;
+	}
+
 	return (0);
 }
 
 /**
  *
  */
-static int handle_gdb_remove_sw_breakpoint(const char *buff, size_t len)
+static int handle_gdb_remove_breakpoint(const char *buff, size_t len)
 {
-	((void)buff); /* Only support 1 sw break at the moment. */
-	((void)len);
+	const char *ptr = buff;
 
-	breakpoint_insn_addr = 0;
+	/* Skip 'z0'. */
+	expect_char('z', ptr, len);
+	expect_char_range('0', '4', ptr, len);
+	expect_char(',', ptr, len);
 
-	/* Send to our serial device. */
-	send_serial_byte(SERIAL_STATE_REM_SW_BREAK);
+	/*
+	 * Check which type of breakpoint we have and act
+	 * accordingly.
+	 *
+	 * Since we only support 1 instruction (ATM) and 1
+	 * data breakpoint, there is no need to check
+	 * address and etc...
+	 */
+	switch (buff[1]) {
+	/* Instruction break. */
+	case '0':
+	case '1':
+		breakpoint_insn_addr = 0;
+		send_serial_byte(SERIAL_STATE_REM_SW_BREAK);
+		break;
+	/* Remaining. */
+	case '2':
+	case '3':
+	case '4':
+		send_serial_byte(SERIAL_STATE_REM_HW_WATCH);
+		break;
+	}
+
+	return (0);
 }
 
 /**
@@ -677,19 +762,13 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 		break;
 	/* Insert breakpoint. */
 	case 'Z':
-		if (gh->cmd_buff[1] == '0')
-			handle_gdb_add_sw_breakpoint(gh->cmd_buff,
+		handle_gdb_add_breakpoint(gh->cmd_buff,
 			sizeof gh->cmd_buff);
-		else
-			send_gdb_unsupported_msg();
 		break;
 	/* Remove breakpoint. */
 	case 'z':
-		if (gh->cmd_buff[1] == '0')
-			handle_gdb_remove_sw_breakpoint(gh->cmd_buff,
+		handle_gdb_remove_breakpoint(gh->cmd_buff,
 			sizeof gh->cmd_buff);
-		else
-			send_gdb_unsupported_msg();
 		break;
 	/* Write register. */
 	case 'P':
@@ -867,7 +946,7 @@ static int handle_serial_receive_read_memory(void)
 
 	/* Patch. */
 	for (k = 0; k < count; k++, i++, j++)
-		dump_buffer[i] = saved_insns[j];
+		dump_buffer[i] = x86_stop_data.d.saved_insns[j];
 
 #endif /* !UART_POLLING. */
 
@@ -956,7 +1035,6 @@ struct serial_handle
 	char buff[64];
 	char csum_read[3];
 	char cmd_buff[64];
-	union urm_x86_regs rm_x86_r;
 } serial_handle = {
 	.state = SERIAL_STATE_START
 };
@@ -969,11 +1047,11 @@ static void handle_serial_state_start(struct serial_handle *sh,
 	{
 		sh->state    = SERIAL_STATE_SS;
 		sh->buff_idx = 0;
-		memset(&sh->rm_x86_r, 0, sizeof(union urm_x86_regs));
+		memset(&x86_stop_data, 0, sizeof(union x86_stop_data));
 	}
 	else if (curr_byte == SERIAL_STATE_READ_MEM_CMD)
 	{
-		sh->state   = SERIAL_STATE_READ_MEM_CMD;
+		sh->state    = SERIAL_STATE_READ_MEM_CMD;
 		sh->buff_idx = 0;
 	}
 	else if (curr_byte == SERIAL_MSG_OK)
@@ -983,30 +1061,17 @@ static void handle_serial_state_start(struct serial_handle *sh,
 static void handle_serial_state_ss(struct serial_handle *sh,
 	uint8_t curr_byte)
 {
-	size_t x86_regs_size = sizeof(union urm_x86_regs);
+	size_t x86_size = sizeof(union x86_stop_data);
 
-	/* Save regs. */
-	if (sh->buff_idx < x86_regs_size)
-		sh->rm_x86_r.r8[sh->buff_idx++] = curr_byte;
-
-#ifndef UART_POLLING
-	/* Save instructions. */
-	else if (sh->buff_idx < x86_regs_size + 4)
-	{
-		saved_insns[sh->buff_idx - x86_regs_size] = curr_byte;
-		sh->buff_idx++;
-	}
-#endif
+	/* Save stopped data. */
+	if (sh->buff_idx < x86_size)
+		x86_stop_data.data[sh->buff_idx++] = curr_byte;
 
 	/* Check if ended. */
-#ifndef UART_POLLING
-	if (sh->buff_idx == x86_regs_size + 4)
-#else
-	if (sh->buff_idx == x86_regs_size)
-#endif
+	if (sh->buff_idx == x86_size)
 	{
 		sh->state = SERIAL_STATE_START;
-		handle_serial_single_step_stop(&sh->rm_x86_r.r);
+		handle_serial_single_step_stop(&x86_stop_data.d.x86_regs);
 	}
 }
 

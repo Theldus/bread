@@ -17,6 +17,18 @@
 			len--; \
 		} while(0)
 
+	#define expect_char_range(c_start,c_end,buf,len) \
+		do { \
+			if (*(buf) < c_start || *(buf) > c_end) { \
+				errw("Expected range %c-%c, got '%c'\n", \
+					(c_start), (c_end), *(buf)); \
+				send_gdb_error(); \
+				return (-1); \
+			} \
+			buf++; \
+			len--; \
+		} while(0)
+
 	#define send_serial_byte(b) \
 		do { \
 			uint8_t byte = (b); \

@@ -73,10 +73,15 @@
 
 ; Misc
 ; ----
-EFLAGS_TF    equ (1<<8)
-EFLAGS_IF    equ (1<<9)
-DR7_LE_GE    equ 0x700
-DR7_LE_GE_L0 equ 0x701
+EFLAGS_TF      equ (1<<8)
+EFLAGS_IF      equ (1<<9)
+DR7_LE_GE      equ 0x700
+DR7_LE_GE_L0   equ 0x701
+DR7_4byte_LEN2 equ (3<<26)
+DR7_L0         equ (1<<0)
+DR7_L2         equ (1<<4)
+STOP_REASON_NORMAL      equ 10
+STOP_REASON_WATCHPOINT  equ 20
 
 ; Register offsets (push_regs/pop_regs)
 ; -------------------------------------
@@ -157,6 +162,8 @@ STOP_OPC equ 0x90fdebf4 ; (f4) (eb fd) (90)
 ; The machine has stopped in single-step mode!
 MSG_ADD_SW_BREAK     equ 0xA8
 MSG_REM_SW_BREAK     equ 0xB8
+MSG_ADD_HW_WATCH     equ 0xB7
+MSG_REM_HW_WATCH     equ 0xC7
 MSG_SINGLE_STEP      equ 0xC8
 MSG_READ_MEM         equ 0xD8
 MSG_CONTINUE         equ 0xE8
@@ -173,3 +180,4 @@ STATE_WRITE_MEM         equ 0X03 ; Write memory state
 STATE_WRITE_MEM_PARAMS  equ 0x04 ; Write memory params state
 STATE_SW_BREAKPOINT     equ 0x05 ; SW breakpoint state
 STATE_REG_WRITE_PARAMS  equ 0x06 ; Reg write parameters
+STATE_HW_WATCH          equ 0x07 ; HW watchpoint

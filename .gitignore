@@ -5,6 +5,7 @@
 *.d
 *.img
 *.bin
+.gdb_history
 bridge
 bochsout.txt
 bx_enh_dbg.ini

@@ -76,7 +76,10 @@ _start:
 	sti
 %endif
 
-.exit:
+	; Set DR7 to a known value
+	mov eax, DR7_LE_GE ; GE/DE/disabled
+	mov DR7, eax
+
 	; Enable TF and IF in backup flags
 	mov bp, sp
 	or word [bp+2], EFLAGS_TF ; TF
@@ -92,7 +95,7 @@ _start:
 	or word [bp], EFLAGS_TF
 	popf
 
-label:
+.label:
 	; Original instructions here
 	nop
 	nop
@@ -106,17 +109,26 @@ label:
 	inc eax
 	nop
 	nop
+	inc byte [cs:lblqlqr]
+	nop
+	nop
+	nop
+	mov ebx, dword [cs:lblqlqr] ; 0x1009F
+	nop
 	xchg cx, cx
 	nop
 	xchg dx, dx
-	jmp label
+	jmp .label
 	xchg dx, dx
 
+.exit:
 	; Return from caller/BIOS
 	pop ds
 	popf
 	popa
 	retf
+
+lblqlqr: dd 0xdeadbeef
 
 ; Padding bytes to 'protect' our handler:
 ; because when single-stepping 'retf'
@@ -176,8 +188,8 @@ handler_int1:
 	push_regs
 
 handler_int1_send:
-	; Send all regs to our bridge
-	call send_regs
+	; Send all regs and stop reason to our bridge
+	call send_stop_msg
 
 %ifndef UART_POLLING
 	; Overwrite our return instruction by
@@ -296,6 +308,12 @@ read_uart:
 	cmp al, MSG_REG_WRITE
 	je .state_start_reg_write ; Write into register
 
+	cmp al, MSG_ADD_HW_WATCH  ; Add a hw watchpoint
+	je .state_start_add_hw_watch
+
+	cmp al, MSG_REM_HW_WATCH  ; Remove a hw watchpoint
+	je .state_start_rem_hw_watch
+
 	maybe_exit_int4           ; Unrecognized byte
 
 	; Already inside a state, check which one
@@ -315,6 +333,9 @@ read_uart:
 
 	cmp byte [cs:state], STATE_REG_WRITE_PARAMS
 	je .state_reg_write_params
+
+	cmp byte [cs:state], STATE_HW_WATCH
+	je .state_hw_watch_params
 
 	maybe_exit_int4
 
@@ -636,6 +657,78 @@ read_uart:
 	call uart_write_byte
 	maybe_exit_int4
 
+	; ---------------------------------------------
+	; Add hardware watchpoint operations
+	; ---------------------------------------------
+
+	;
+	; Start of state
+	;
+.state_start_add_hw_watch:
+	mov byte [cs:byte_counter], 0
+	mov byte [cs:state], STATE_HW_WATCH
+	maybe_exit_int4
+
+	;
+	; Obtains watchpoint type and address
+	;
+.state_hw_watch_params:
+	; Save new byte read
+	movzx bx, byte [cs:byte_counter]
+	mov   byte [cs:read_mem_params+bx], al
+	inc   byte [cs:byte_counter]
+
+	; Check if we read everything
+	cmp byte [cs:byte_counter], 5
+	je  .state_hw_watch
+	maybe_exit_int4
+
+	;
+	; Adds a hardware watchpoint for the given type
+	; and address
+	;
+.state_hw_watch:
+	mov   eax, [cs:second_param_dword]    ; Watch address
+	mov   DR2, eax
+	movzx eax, byte [cs:first_param_byte] ; R/W
+	shl   eax, 24  ; R/W at R/W 2
+	mov   ebx, DR7
+	or    ebx, eax
+	; 4-byte length watch & enable it
+	or    ebx, DR7_4byte_LEN2 | DR7_L2
+	mov   DR7, ebx
+
+	; Reset state
+	mov byte [cs:state], STATE_DEFAULT
+
+	; Send an 'OK'
+	mov bl, MSG_OK
+	call uart_write_byte
+	maybe_exit_int4
+
+	; ---------------------------------------------
+	; Remove hardware watchpoint operations
+	; ---------------------------------------------
+
+	;
+	; Start of state
+	;
+.state_start_rem_hw_watch:
+	; Since we only support 1 watchpoint, there is
+	; no need to do fancy stuff
+	xor eax, eax
+	mov DR2, eax
+	mov eax, DR7
+	and al, ~DR7_L2
+	mov DR7, eax
+
+	; Reset state
+	mov byte [cs:state], STATE_DEFAULT
+
+	; Send an 'OK'
+	mov bl, MSG_OK
+	call uart_write_byte
+	maybe_exit_int4
 
 exit_int4:
 	pop_regs
@@ -748,7 +841,7 @@ phys_to_seg:
 	ret
 
 ;
-; Send all regs over UART to the bridge
+; Send all regs and stop reason over UART to the bridge
 ;
 ; Note: This function assumes that the stack
 ; follows the layout that 'push_regs' leave,
@@ -757,7 +850,7 @@ phys_to_seg:
 ;     ret_addr/eip (from this function)
 ;     push_regs
 ;
-send_regs:
+send_stop_msg:
 	; Signal that we stopped!
 	mov bl, MSG_SINGLE_STEP
 	call uart_write_byte
@@ -783,6 +876,24 @@ send_regs:
 		uart_write_word ax
 		loop .loop2
 
+	; Discover what make us stop and send the reason
+	mov eax, DR6
+	bt  ax,  2
+	jnc .normal_break
+
+	; Watchpoint break in DR2
+	mov bl, STOP_REASON_WATCHPOINT
+	call uart_write_byte
+	mov eax, DR2
+	uart_write_dword eax
+	jmp .exit
+
+.normal_break:
+	mov bl, STOP_REASON_NORMAL
+	call uart_write_byte
+	uart_write_dword eax ; stub value, shoud not be used
+
+.exit:
 	ret
 
 ;
@@ -793,11 +904,11 @@ send_regs:
 disable_hw_breakpoints:
 	; Reset DR6
 	mov eax, DR6
-	and al,  0xF0
+	xor al,  al   ; Clear L0/G0-L3/G3
 	mov DR6, eax
 	; Disable LE0
 	mov eax, DR7
-	xor al,  al
+	and al, ~DR7_L0
 	mov DR7, eax
 	ret
 
@@ -830,6 +941,7 @@ enable_hw_breakpoints:
 	; Check if there is something First
 	mov ebx, DR0
 	cmp ebx, 0
+	mov ecx, DR7
 	jz  .not_enable
 
 	;
@@ -838,13 +950,14 @@ enable_hw_breakpoints:
 	; otherwise, thats no problem =)
 	;
 	cmp eax, ebx
-	mov eax, DR7_LE_GE_L0 ; Enabled
 	jne .enable
 .not_enable:
-	mov eax, DR7_LE_GE    ; Disabled
+	and ecx, ~DR7_L0 ; Disabled
+	jmp .exit
 .enable:
-	mov DR7, eax
+	or  ecx,  DR7_L0 ; Enabled
 .exit:
+	mov DR7, ecx
 	ret
 
 ; --------------------------------
