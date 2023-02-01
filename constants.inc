@@ -77,7 +77,8 @@ EFLAGS_TF      equ (1<<8)
 EFLAGS_IF      equ (1<<9)
 DR7_LE_GE      equ 0x700
 DR7_LE_GE_L0   equ 0x701
-DR7_4byte_LEN2 equ (3<<26)
+DR7_LE2_RW     equ (3<<24)
+DR7_LE2_4byte  equ (3<<26)
 DR7_L0         equ (1<<0)
 DR7_L2         equ (1<<4)
 STOP_REASON_NORMAL      equ 10

@@ -694,8 +694,8 @@ read_uart:
 	shl   eax, 24  ; R/W at R/W 2
 	mov   ebx, DR7
 	or    ebx, eax
-	; 4-byte length watch & enable it
-	or    ebx, DR7_4byte_LEN2 | DR7_L2
+	; 4-byte length watch & not enable it
+	or    ebx, DR7_LE2_4byte
 	mov   DR7, ebx
 
 	; Reset state
@@ -719,7 +719,7 @@ read_uart:
 	xor eax, eax
 	mov DR2, eax
 	mov eax, DR7
-	and al, ~DR7_L2
+	and eax, ~(DR7_L2 | DR7_LE2_RW | DR7_LE2_4byte)
 	mov DR7, eax
 
 	; Reset state
@@ -886,14 +886,12 @@ send_stop_msg:
 	call uart_write_byte
 	mov eax, DR2
 	uart_write_dword eax
-	jmp .exit
+	ret
 
 .normal_break:
 	mov bl, STOP_REASON_NORMAL
 	call uart_write_byte
 	uart_write_dword eax ; stub value, shoud not be used
-
-.exit:
 	ret
 
 ;
@@ -906,9 +904,9 @@ disable_hw_breakpoints:
 	mov eax, DR6
 	xor al,  al   ; Clear L0/G0-L3/G3
 	mov DR6, eax
-	; Disable LE0
+	; Disable LE0 and LE2
 	mov eax, DR7
-	and al, ~DR7_L0
+	and al, ~(DR7_L0 | DR7_L2)
 	mov DR7, eax
 	ret
 
@@ -930,9 +928,36 @@ enable_hw_breakpoints:
 	and al,  0xF0
 	mov DR6, eax
 
+	; Enable insn hw breakpoints
+	call enable_insn_hw_bp
+
+	; Enable watchpoints if any
+	mov eax, DR2
+	cmp eax, 0
+	je  .not_enable
+	mov eax, DR7
+	or  eax, DR7_L2 ; We can always safely enable
+	mov DR7, eax    ; when returning to execute
+
+.not_enable:
+	ret
+
+;
+; Enable instruction breakpoints if any
+;
+; Parameters:
+;   none
+;
+; Required stack layout:
+; Stack:
+;   ret_addr
+;   ret_addr
+;   push_regs
+;
+enable_insn_hw_bp:
 	; Get phys addr
 	mov   bp,  sp
-	add   bp,  2
+	add   bp,  4
 	movzx eax, word [ss:bp+CS_OFF]
 	shl   eax, 4
 	movzx ebx, word [ss:bp+EIP_OFF]
