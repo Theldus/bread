@@ -216,7 +216,8 @@ handler_int1_send:
 	mov dword [ds:bx], STOP_OPC
 
 	; Send our original instructions.
-	uart_write_dword eax
+	mov ebx, eax
+	call uart_write_dword
 
 	; should_step = 0
 	mov byte [cs:should_step], 0
@@ -820,6 +821,34 @@ uart_write_byte:
 	ret
 
 ;
+; Write a word to UART
+;
+; Parameters:
+;   bx = word to be written
+;
+uart_write_word:
+	call uart_write_byte
+	shr bx, 8
+	call uart_write_byte
+	ret
+
+;
+; Write a dword to UART
+;
+; Parameters:
+;   ebx = dword to be written
+;
+uart_write_dword:
+	call uart_write_byte
+	shr ebx, 8
+	call uart_write_byte
+	shr ebx, 8
+	call uart_write_byte
+	shr ebx, 8
+	call uart_write_byte
+	ret
+
+;
 ; Convert a physical address to SEG:OFF
 ; Parameters:
 ;   eax = Physical address
@@ -866,14 +895,16 @@ send_stop_msg:
 	mov cx, 8
 	.loop1:
 		lodsd
-		uart_write_dword eax
+		mov ebx, eax
+		call uart_write_dword
 		loop .loop1
 
 	; Second: 16-bit regs: GS-EFLAGS
 	mov cx, 8
 	.loop2:
 		lodsw
-		uart_write_word ax
+		mov bx, ax
+		call uart_write_word
 		loop .loop2
 
 	; Discover what make us stop and send the reason
@@ -885,13 +916,14 @@ send_stop_msg:
 	mov bl, STOP_REASON_WATCHPOINT
 	call uart_write_byte
 	mov eax, DR2
-	uart_write_dword eax
+	mov ebx, eax
+	call uart_write_dword
 	ret
 
 .normal_break:
 	mov bl, STOP_REASON_NORMAL
 	call uart_write_byte
-	uart_write_dword eax ; stub value, shoud not be used
+	call uart_write_dword ; stub value, shoud not be used
 	ret
 
 ;

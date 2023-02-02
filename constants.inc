@@ -18,22 +18,6 @@
 	mov dx, 0x80
 	out dx, al
 %endmacro
-%macro uart_write_dword 1
-	mov ebx, %1
-	call uart_write_byte
-	shr ebx, 8
-	call uart_write_byte
-	shr ebx, 8
-	call uart_write_byte
-	shr ebx, 8
-	call uart_write_byte
-%endmacro
-%macro uart_write_word 1
-	mov bx, %1
-	call uart_write_byte
-	shr bx, 8
-	call uart_write_byte
-%endmacro
 
 %macro maybe_exit_int4 0
 	%ifndef UART_POLLING
