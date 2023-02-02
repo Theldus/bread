@@ -1,24 +1,84 @@
 ; --------------------------------
 ; Macros
 ; --------------------------------
+
+;
+; Generic macro to start in a given state and read
+; N bytes. After that, jump to the proper state
+;
+; Parameters:
+;   first:  state name label, like: reg_write
+;   second: state name, like: STATE_REG_WRITE_PARAMS
+;   third:  how many bytes to read
+;
+; Note: Please note that should be added an entry in
+; the jump table called:
+;     .state_start_<first_param>
+; and later, in '.check_other_states' a jump to:
+;     .state_<first_param>_params
+;
+%macro define_start_and_params_state 3
+	;
+	; Start of state
+	;
+.state_start_%1:
+	mov byte [cs:byte_counter], 0
+	mov byte [cs:state], %2
+	maybe_exit_int4
+
+	;
+	; Obtains register offset and value
+	;
+.state_%1_params:
+	; Save new byte read
+	movzx bx, byte [cs:byte_counter]
+	mov   byte [cs:read_mem_params+bx], al
+	inc   byte [cs:byte_counter]
+
+	; Check if we read everything
+	cmp byte [cs:byte_counter], %3
+	je  .state_%1
+	maybe_exit_int4
+%endmacro
+
+;
+; Output a byte to an I/O port
+; Parameters:
+;    first:  I/O port
+;    second: byte
+;
 %macro outbyte 2
 	mov ax, %2
 	mov dx, %1
 	out dx, al
 %endmacro
+
+;
+; Read from an I/O into al
+; Parameters:
+;   first: I/O port
+;
 %macro inputb 1
 	mov dx, %1
 	in al, dx
 %endmacro
+
+; Bochs debugger magic breakpoint
 %macro dbg 0
 	xchg bx, bx
 %endmacro
+
+; Wait a little bit for I/O device to complete
+; operation
 %macro iowait 0
 	xor ax, ax
 	mov dx, 0x80
 	out dx, al
 %endmacro
 
+; Exit from handler or read next byte
+; This considers the current approach (whether with
+; polling or not and then takes an action)
 %macro maybe_exit_int4 0
 	%ifndef UART_POLLING
 		jmp exit_int4
@@ -34,6 +94,10 @@
 	%endif
 %endmacro
 
+; Push/pop regs from handler
+; Both int1 and int4 have the same handler, and
+; thanks to this, one function can jump to another
+; without worrying about the stack layout
 %macro push_regs 0
 	push ss
 	push ds

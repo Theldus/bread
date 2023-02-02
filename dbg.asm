@@ -301,7 +301,7 @@ read_uart:
 	je .state_start_ctrlc
 
 	cmp al, MSG_ADD_SW_BREAK  ; Add 'software' breakpoint
-	je .state_start_add_sw_break
+	je .state_start_add_sw_breakpoint
 
 	cmp al, MSG_REM_SW_BREAK  ; Remove 'sw' breakpoint
 	je .state_start_rem_sw_break
@@ -330,13 +330,13 @@ read_uart:
 	je .state_write_memory
 
 	cmp byte [cs:state], STATE_SW_BREAKPOINT
-	je .state_sw_break_params
+	je .state_add_sw_breakpoint_params
 
 	cmp byte [cs:state], STATE_REG_WRITE_PARAMS
 	je .state_reg_write_params
 
 	cmp byte [cs:state], STATE_HW_WATCH
-	je .state_hw_watch_params
+	je .state_add_hw_watch_params
 
 	maybe_exit_int4
 
@@ -344,27 +344,11 @@ read_uart:
 	; Read memory operations
 	; ---------------------------------------------
 
+	; Define read state
 	;
-	; Start of state
-	;
-.state_start_read_memory:
-	mov byte [cs:byte_counter], 0
-	mov byte [cs:state], STATE_READ_MEM
-	maybe_exit_int4
-
-	;
-	; Obtain memory address to be read
-	;
-.state_read_memory_params:  ; params = address (4-bytes LE) +
-	; Save new byte read               size (2-bytes LE)
-	movzx bx, byte [cs:byte_counter]
-	mov   byte [cs:read_mem_params+bx], al
-	inc   byte [cs:byte_counter]
-
-	; Check if we read everything
-	cmp byte [cs:byte_counter], 6
-	je  .state_read_memory
-	maybe_exit_int4
+	; Params: address (4-bytes LE) + size (2-bytes LE)
+	define_start_and_params_state \
+		read_memory, STATE_READ_MEM, 6
 
 	;
 	; Read memory
@@ -537,34 +521,16 @@ read_uart:
 	; In order to make things easier, I opted to use hw
 	; breakpoints =)
 
+	; Define sw breakpoint state
 	;
-	; Start of state
-	;
-.state_start_add_sw_break:
-	mov byte [cs:byte_counter], 0
-	mov byte [cs:state], STATE_SW_BREAKPOINT
-	maybe_exit_int4
-
-	;
-	; Obtain memory address to break
-	; Params:
-	;   phys address, 4-bytes, LE
-	;
-.state_sw_break_params:
-	; Save new byte read
-	movzx bx, byte [cs:byte_counter]
-	mov   byte [cs:read_mem_params+bx], al
-	inc   byte [cs:byte_counter]
-
-	; Check if we read everything
-	cmp byte [cs:byte_counter], 4
-	je  .state_sw_breakpoint
-	maybe_exit_int4
+	; Params: phys address to break (4-bytes LE)
+	define_start_and_params_state \
+		add_sw_breakpoint, STATE_SW_BREAKPOINT, 4
 
 	;
 	; Software breapoint
 	;
-.state_sw_breakpoint:
+.state_add_sw_breakpoint:
 	mov eax, dword [cs:read_mem_addr]
 	mov DR0, eax
 
@@ -602,27 +568,12 @@ read_uart:
 	; Register write operations
 	; ---------------------------------------------
 
+	; Define read state
 	;
-	; Start of state
-	;
-.state_start_reg_write:
-	mov byte [cs:byte_counter], 0
-	mov byte [cs:state], STATE_REG_WRITE_PARAMS
-	maybe_exit_int4
-
-	;
-	; Obtains register offset and value
-	;
-.state_reg_write_params:
-	; Save new byte read
-	movzx bx, byte [cs:byte_counter]
-	mov   byte [cs:read_mem_params+bx], al
-	inc   byte [cs:byte_counter]
-
-	; Check if we read everything
-	cmp byte [cs:byte_counter], 5
-	je  .state_reg_write
-	maybe_exit_int4
+	; Params: register number (1-byte LE) +
+	;         register value  (4-bytes LE)
+	define_start_and_params_state \
+		reg_write, STATE_REG_WRITE_PARAMS, 5
 
 	;
 	; Writes the read value to the appropriate
@@ -662,33 +613,21 @@ read_uart:
 	; Add hardware watchpoint operations
 	; ---------------------------------------------
 
+	; Define add hw watchpoint state
 	;
-	; Start of state
+	; Params:
+	;   1-byte LE: watchpoint kind (whether write or
+	;              read/write (access))
+	;   4-byte LE: watchpoint address
 	;
-.state_start_add_hw_watch:
-	mov byte [cs:byte_counter], 0
-	mov byte [cs:state], STATE_HW_WATCH
-	maybe_exit_int4
-
-	;
-	; Obtains watchpoint type and address
-	;
-.state_hw_watch_params:
-	; Save new byte read
-	movzx bx, byte [cs:byte_counter]
-	mov   byte [cs:read_mem_params+bx], al
-	inc   byte [cs:byte_counter]
-
-	; Check if we read everything
-	cmp byte [cs:byte_counter], 5
-	je  .state_hw_watch
-	maybe_exit_int4
+	define_start_and_params_state \
+		add_hw_watch, STATE_HW_WATCH, 5
 
 	;
 	; Adds a hardware watchpoint for the given type
 	; and address
 	;
-.state_hw_watch:
+.state_add_hw_watch:
 	mov   eax, [cs:second_param_dword]    ; Watch address
 	mov   DR2, eax
 	movzx eax, byte [cs:first_param_byte] ; R/W
