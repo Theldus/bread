@@ -11,7 +11,7 @@
 #include "net.h"
 #include "util.h"
 
-#define BAUD_RATE B9600
+#define BAUD_RATE B115200
 
 #define MAX_FDS 4
 

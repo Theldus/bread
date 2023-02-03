@@ -24,7 +24,7 @@
 .state_start_%1:
 	mov byte [cs:byte_counter], 0
 	mov byte [cs:state], %2
-	maybe_exit_int4
+	jmp read_uart
 
 	;
 	; Obtains register offset and value
@@ -38,7 +38,7 @@
 	; Check if we read everything
 	cmp byte [cs:byte_counter], %3
 	je  .state_%1
-	maybe_exit_int4
+	jmp read_uart
 %endmacro
 
 ;
@@ -74,24 +74,6 @@
 	xor ax, ax
 	mov dx, 0x80
 	out dx, al
-%endmacro
-
-; Exit from handler or read next byte
-; This considers the current approach (whether with
-; polling or not and then takes an action)
-%macro maybe_exit_int4 0
-	%ifndef UART_POLLING
-		jmp exit_int4
-	%else
-		jmp read_uart
-	%endif
-%endmacro
-%macro true_exit_int4 0
-	%ifndef UART_POLLING
-		jmp exit_int4
-	%else
-		jmp exit_int1
-	%endif
 %endmacro
 
 ; Push/pop regs from handler
@@ -155,7 +137,7 @@ EFLAGS_OFF equ 46
 ; --------------
 UART_CLOCK_SIGNAL equ 1843200
 UART_BASE         equ 0x3F8
-UART_BAUD         equ 9600
+UART_BAUD         equ 115200 ; set to 9600 if things go wrong
 UART_DIVISOR      equ UART_CLOCK_SIGNAL / (UART_BAUD << 4)
 UART_RB           equ UART_BASE + 0 ; Receiver Buffer (R).
 UART_IER          equ UART_BASE + 1 ; Interrupt Enable Register (RW).

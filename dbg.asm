@@ -269,10 +269,12 @@ handler_int4_com1:
 
 	; Read a single byte from UART to al
 read_uart:
-%ifdef UART_POLLING
 	inputb UART_LSR ; Check if there is input available
 	bt  ax, 0
+%ifdef UART_POLLING
 	jnc read_uart
+%else
+	jnc exit_int4
 %endif
 
 	inputb UART_RB
@@ -315,7 +317,7 @@ read_uart:
 	cmp al, MSG_REM_HW_WATCH  ; Remove a hw watchpoint
 	je .state_start_rem_hw_watch
 
-	maybe_exit_int4           ; Unrecognized byte
+	jmp read_uart             ; Unrecognized byte
 
 	; Already inside a state, check which one
 	; and acts accordingly
@@ -338,7 +340,7 @@ read_uart:
 	cmp byte [cs:state], STATE_HW_WATCH
 	je .state_add_hw_watch_params
 
-	maybe_exit_int4
+	jmp read_uart
 
 	; ---------------------------------------------
 	; Read memory operations
@@ -375,7 +377,7 @@ read_uart:
 
 	; Reset our state
 	mov byte [cs:state], STATE_DEFAULT
-	maybe_exit_int4
+	jmp read_uart
 
 	; ---------------------------------------------
 	; Write memory operations
@@ -389,7 +391,7 @@ read_uart:
 	mov word  [cs:read_mem_size], 0
 	mov dword [cs:read_mem_addr], 0
 	mov byte [cs:state], STATE_WRITE_MEM_PARAMS
-	maybe_exit_int4
+	jmp read_uart
 
 	;
 	; Obtain memory address to be written
@@ -404,10 +406,10 @@ read_uart:
 	cmp byte [cs:byte_counter], 6
 	jne .exit
 	mov byte [cs:state], STATE_WRITE_MEM
-	maybe_exit_int4
+	jmp read_uart
 
 	.exit:
-		maybe_exit_int4
+		jmp read_uart
 
 	;
 	; Write memory
@@ -430,7 +432,7 @@ read_uart:
 	; Decrement and check
 	dec word [cs:read_mem_size]
 	jz .end
-	maybe_exit_int4
+	jmp read_uart
 
 .end:
 	; Reset state
@@ -439,7 +441,7 @@ read_uart:
 	; Send an 'OK'
 	mov bl, MSG_OK
 	call uart_write_byte
-	maybe_exit_int4
+	jmp read_uart
 
 
 	; ---------------------------------------------
@@ -495,7 +497,7 @@ read_uart:
 
 	; Enable (or not) breakpoints
 	call enable_hw_breakpoints
-	true_exit_int4
+	jmp exit_int4
 
 	; ---------------------------------------------
 	; Ctrl-C/break
@@ -540,7 +542,7 @@ read_uart:
 	; Send an 'OK'
 	mov bl, MSG_OK
 	call uart_write_byte
-	maybe_exit_int4
+	jmp read_uart
 
 	; ---------------------------------------------
 	; Remove 'software' breakpoint
@@ -562,7 +564,7 @@ read_uart:
 	; Send an 'OK'
 	mov bl, MSG_OK
 	call uart_write_byte
-	maybe_exit_int4
+	jmp read_uart
 
 	; ---------------------------------------------
 	; Register write operations
@@ -607,7 +609,7 @@ read_uart:
 	; Send an 'OK'
 	mov bl, MSG_OK
 	call uart_write_byte
-	maybe_exit_int4
+	jmp read_uart
 
 	; ---------------------------------------------
 	; Add hardware watchpoint operations
@@ -644,7 +646,7 @@ read_uart:
 	; Send an 'OK'
 	mov bl, MSG_OK
 	call uart_write_byte
-	maybe_exit_int4
+	jmp read_uart
 
 	; ---------------------------------------------
 	; Remove hardware watchpoint operations
@@ -668,7 +670,7 @@ read_uart:
 	; Send an 'OK'
 	mov bl, MSG_OK
 	call uart_write_byte
-	maybe_exit_int4
+	jmp read_uart
 
 exit_int4:
 	pop_regs
