@@ -4,13 +4,17 @@
 #include "util.h"
 
 /**
- *
+ * Global buffer, responsible to handle dynamic allocations
+ * from/to GDB messages.
  */
 static char  *gbuffer      = NULL;
 static size_t gbuffer_size = 0;
 
 /**
+ * @brief Increase the global buffer size to a new value
+ * if needed.
  *
+ * @param new_size New buffer size.
  */
 static void increase_buffer(size_t new_size)
 {
@@ -27,7 +31,12 @@ static void increase_buffer(size_t new_size)
 }
 
 /**
+ * @brief For a given nibble, to converts to its
+ * ascii representative form, ie: 10 -> a.
  *
+ * @param nibble Nibble input value to be converted.
+ *
+ * @return Returns the converted value.
  */
 static inline char to_digit(int nibble)
 {
@@ -36,7 +45,13 @@ static inline char to_digit(int nibble)
 }
 
 /**
+ * @brief For a given nibble (in its char form),
+ * convert to the decimal representation, i.e:
+ * 'b' -> 11.
  *
+ * @param ch Char nibble to be converted.
+ *
+ * @return Returns the converted value.
  */
 static inline int to_value(int ch)
 {
@@ -51,7 +66,17 @@ static inline int to_value(int ch)
 }
 
 /**
+ * @brief Encodes a binary data inside @p data to its
+ * representative form in ascii hex value.
  *
+ * @param data Data to be encoded in ascii-hex form.
+ * @param len Length of @p data.
+ *
+ * @return Returns a buffer containing the encoded
+ * buffer.
+ *
+ * @note Please note that the size of the output
+ * buffer is twice bigger than the input buffer.
  */
 char *encode_hex(const char *data, size_t len)
 {
@@ -70,7 +95,15 @@ char *encode_hex(const char *data, size_t len)
 }
 
 /**
+ * @brief Converts an input buffer containing an ascii
+ * hex-value representation into the equivalent binary
+ * form.
  *
+ * @param data Input buffer to be decoded to binary.
+ * @param len Input buffer length.
+ *
+ * @return Returns the buffer containing the binary
+ * representation of the data.
  */
 char *decode_hex(const char *data, size_t len)
 {
@@ -90,7 +123,17 @@ char *decode_hex(const char *data, size_t len)
 }
 
 /**
+ * @brief Reads a given integer encoded in hex
+ * and returns it.
  *
+ * @param buffer Buffer containing the integer to be
+ *               read.
+ * @param len    Buffer length. This variable is updated.
+ *
+ * @param endptr If not NULL, the position for the first
+ *               non-hex digit character is saved.
+ *
+ * @return Returns the integer read.
  */
 uint32_t read_int(const char *buff, size_t *len,
 	const char **endptr)
@@ -126,7 +169,14 @@ out:
 }
 
 /**
+ * @brief Same behavior as read_int(), but do not
+ * updates @len nor returns where next non-digit
+ * char is.
  *
+ * @param buf Buffer to be read.
+ * @param len Buffer length.
+ *
+ * @return Returns the integer read.
  */
 uint32_t simple_read_int(const char *buf, size_t len)
 {

@@ -4,11 +4,11 @@
 	struct handler_fd
 	{
 		int fd;
-		void (*handler)(struct handler_fd *fd); /* void func(int fd) */
+		void (*handler)(struct handler_fd *fd);
 	};
 
 	extern ssize_t send_all(
-		int conn, const void *buf, size_t len, int flags);
+		int conn, const void *buf, size_t len);
 	extern void setup_server(int *srv_fd, uint16_t port);
 	extern void setup_serial(int *sfd, const char *sdev);
 	extern void close_handled_fd(int fd);

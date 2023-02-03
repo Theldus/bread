@@ -11,6 +11,15 @@
 #include "net.h"
 #include "util.h"
 
+/*
+ * Serial speed
+ *
+ * If anything goes wrong here, please lower this value,
+ * like: B9600.
+ *
+ * Any changes here should also be reflected on
+ * 'constants.inc' too.
+ */
 #define BAUD_RATE B115200
 
 #define MAX_FDS 4
@@ -24,10 +33,21 @@ static int serial_fd;
 static struct termios savetty;
 
 /**
+ * @brief Write @p len bytes from @p buf to @p conn.
  *
+ * Contrary to send(2)/write(2) that might return with
+ * less bytes written than specified, this function
+ * attempts to write the entire buffer, because...
+ * thats the most logical thing to do...
+ *
+ * @param conn Target file descriptor.
+ * @param buf Buffer to be sent.
+ * @param len Amount of bytes to be sent.
+ *
+ * @return Returns 0 if success, -1 otherwise.
  */
 ssize_t send_all(
-	int conn, const void *buf, size_t len, int flags)
+	int conn, const void *buf, size_t len)
 {
 	const char *p;
 	ssize_t ret;
@@ -48,7 +68,11 @@ ssize_t send_all(
 }
 
 /**
+ * @brief Configure a TCP server to listen to the
+ * specified port @p port.
  *
+ * @param srv_fd Returned server fd.
+ * @param port Port to listen.
  */
 void setup_server(int *srv_fd, uint16_t port)
 {
@@ -76,13 +100,16 @@ void setup_server(int *srv_fd, uint16_t port)
 	listen(*srv_fd, 1);
 }
 
-/**/
+/* Restore the tty/device while exiting. */
 static void restore_tty(void) {
 	tcsetattr(serial_fd, TCSANOW, &savetty);
 }
 
 /**
+ * @brief Initial setup for the serial device.
  *
+ * @param sfd Returned serial device fd.
+ * @param sdev Serial device path, like: /dev/ttyUSB0
  */
 void setup_serial(int *sfd, const char *sdev)
 {
@@ -117,7 +144,10 @@ void setup_serial(int *sfd, const char *sdev)
 }
 
 /**
+ * @brief Check for errors on a given pollfd @p p.
  *
+ * @return Returns 0 if no errors were found, 1
+ * otherwise.
  */
 static inline int events_error(struct pollfd *p)
 {
@@ -137,19 +167,17 @@ static inline int events_error(struct pollfd *p)
 	return (0);
 }
 
-
-
 /**
+ * @brief Change a given fd to another.
  *
- */
-void close_handled_fd(int fd)
-{
-	//fecha o fd atual e seta o slot como -1, util
-	//p qnd uma das conexoes morrer
-}
-
-/**
+ * This routine is required due to how the communication
+ * works: when a connection is accepted, the server fd
+ * is no longer needed, so it should be closed and
+ * replaced with the fd of the accepted connection.
  *
+ * @param fd_old Old fd to be closed and replaced.
+ * @param new_hfd Handler_fd structure containing the new
+ *                fd and handler routine.
  */
 void change_handled_fd(int fd_old, struct handler_fd *new_hfd)
 {
@@ -172,7 +200,9 @@ void change_handled_fd(int fd_old, struct handler_fd *new_hfd)
 	hfds[i].handler = new_hfd->handler;
 }
 
-/**/
+/**
+ * @brief Fill initial value to the fd list.
+ */
 static void init_handle_fds(void)
 {
 	int i;
@@ -182,7 +212,19 @@ static void init_handle_fds(void)
 }
 
 /**
+ * @brief Polls any changes in the fd list and
+ * call the respective handler.
  *
+ * All the communication is done here: whenever
+ * there is something to handle (like serial or
+ * GDB), this routine calls the appropriate
+ * handler.
+ *
+ * That way, there's no need to use threads nor
+ * any more elaborate mechanisms.
+ *
+ * @param n Number of fds to handle.
+ * @param hfd_list Handler_fd list.
  */
 void handle_fds(int n, struct handler_fd *hfd_list)
 {

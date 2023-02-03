@@ -6,6 +6,11 @@
 	#include <stdlib.h>
 
 	/* Macros. */
+
+	/*
+	 * Expects a single char, and if match, increase the buffer
+	 * and decrease the length.
+	 */
 	#define expect_char(c,buf,len) \
 		do { \
 			if ((c) != *(buf)) { \
@@ -17,6 +22,10 @@
 			len--; \
 		} while(0)
 
+	/*
+	 * Expects a char range, and if match, increase the buffr
+	 * and decreases the length.
+	 */
 	#define expect_char_range(c_start,c_end,buf,len) \
 		do { \
 			if (*(buf) < c_start || *(buf) > c_end) { \
@@ -29,30 +38,32 @@
 			len--; \
 		} while(0)
 
+	/* Send a single byte to the serial device. */
 	#define send_serial_byte(b) \
 		do { \
 			uint8_t byte = (b); \
-			send_all(serial_fd, &byte, 1, 0); \
+			send_all(serial_fd, &byte, 1); \
 		} while(0)
 
+	/* Send a word (16-bit) to the serial device. */
 	#define send_serial_word(w) \
 		do { \
 			uint16_t word = (w); \
-			send_all(serial_fd, &word, 2, 0); \
+			send_all(serial_fd, &word, 2); \
 		} while(0)
 
+	/* Send a double word (32-bit) to the serial device. */
 	#define send_serial_dword(dw) \
 		do { \
 			uint32_t dword = (dw); \
-			send_all(serial_fd, &dword, 4, 0); \
+			send_all(serial_fd, &dword, 4); \
 		} while(0)
 
-
-
+	/* Math macros. */
 	#define ABS(N) (((N)<0)?(-(N)):(N))
 	#define MIN(x, y) ((x) < (y) ? (x) : (y))
 
-	/**/
+	/* Error and log macros. */
 	#define errx(...) \
 		do { \
 			fprintf(stderr, __VA_ARGS__); \

@@ -8,9 +8,10 @@
 
 #define DUMP_REGS 1
 
+/* Convert a given SEG:OFF to physical address. */
 #define TO_PHYS(S,O) (((S) << 4)+(O))
 
-/**/
+/* File descriptors for GDB and serial. */
 static int gdb_fd;
 static int serial_fd;
 
@@ -41,9 +42,8 @@ static int serial_fd;
 #define STOP_REASON_NORMAL      10
 #define STOP_REASON_WATCHPOINT  20
 
-//#define USE_MOCKS
-
-/**/
+/* The registers are cached, so this flag signals
+ * if the cache is updated or not. */
 static int have_x86_regs = 0;
 
 /* Memory dump helpers. */
@@ -56,7 +56,8 @@ static uint32_t breakpoint_insn_addr;
 static int single_step_before_continue;
 
 /**
- *
+ * Mini-buffr to hold different byte-sized values
+ * to send to serial.
  */
 union minibuf
 {
@@ -90,7 +91,13 @@ struct srm_x86_regs
 	uint16_t eflags;
 } __attribute__((packed));
 
-/**/
+/**
+ * x86 stop data
+ *
+ * This is the data the is sent to us every time the
+ * debugger has stopped, whether by single-step,
+ * breakpoint, signal and etc.
+ */
 union x86_stop_data
 {
 	struct d
@@ -128,13 +135,14 @@ struct sx86_regs
 	uint32_t gs;
 } __attribute__((packed));
 
-/**
- *
- */
+/* Amount of registers. */
 #define MAX_REGS (sizeof(struct sx86_regs)/sizeof(uint32_t))
 
 /**
- *
+ * The x86 registers that are kept as cache and sent to
+ * GDB as well. Since these register might be accessed
+ * from various ways, this union provides an easy way
+ * to do that.
  */
 static union ux86_regs
 {
@@ -148,7 +156,16 @@ static union ux86_regs
  * ------------------------------------------------------------------*/
 
 /**
+ * @brief Send a GDB command/packet in the format:
+ * $data#NN, where NN is the checksum modulo 256.
  *
+ * All GDB commands follows the same structure.
+ *
+ * @param buff Buffer containing the data to be
+ * sent.
+ * @param len Buffer length.
+ *
+ * @return Returns 0 if success, -1 otherwise.
  */
 static ssize_t send_gdb_cmd(const char *buff, size_t len)
 {
@@ -162,11 +179,11 @@ static ssize_t send_gdb_cmd(const char *buff, size_t len)
 		csum += buff[i];
 	csum &= 0xFF;
 
-	send_all(gdb_fd, "$", 1, 0);
-	send_all(gdb_fd, buff, len, 0);
-	send_all(gdb_fd, "#", 1, 0);
+	send_all(gdb_fd, "$", 1);
+	send_all(gdb_fd, buff, len);
+	send_all(gdb_fd, "#", 1);
 	snprintf(csum_str, 3, "%02x", csum);
-	ret = send_all(gdb_fd, csum_str, 2, 0);
+	ret = send_all(gdb_fd, csum_str, 2);
 
 	if (ret < 0)
 		errx("Unable to send command to GDB!\n");
@@ -175,7 +192,7 @@ static ssize_t send_gdb_cmd(const char *buff, size_t len)
 }
 
 /**
- *
+ * @brief Send the halt reason to GDB.
  */
 static inline void send_gdb_halt_reason(void)
 {
@@ -200,35 +217,43 @@ static inline void send_gdb_halt_reason(void)
 }
 
 /**
- *
+ * @brief Acks a previous message/packet sent from GDB
  */
 static inline void send_gdb_ack(void) {
-	send_all(gdb_fd, "+", 1, 0);
+	send_all(gdb_fd, "+", 1);
 }
 
 /**
- *
+ * @brief Tells GDB that we do not support the
+ * receive message/packet.
  */
 static inline void send_gdb_unsupported_msg(void) {
 	send_gdb_cmd(NULL, 0);
 }
 
 /**
+ * @brief Confirms that the previous command was
+ * successfully executed.
  *
+ * The 'OK' command is generally sent by the serial,
+ * and then forwarded to GDB, as the serial device is
+ * the only one that knows if the command succeeded
+ * or not.
  */
 static inline void send_gdb_ok(void) {
 	send_gdb_cmd("OK", 2);
 }
 
 /**
- *
+ * @brief Tells GDB that something went wrong with
+ * the latest command.
  */
 static inline void send_gdb_error(void) {
 	send_gdb_cmd("E00", 3);
 }
 
 /**
- *
+ * @brief Sends a 'Ctrl+C' to the serial device.
  */
 static void send_serial_ctrlc(void) {
 	send_serial_byte(3);
@@ -239,7 +264,10 @@ static void send_serial_ctrlc(void) {
  * ------------------------------------------------------------------*/
 
 /**
+ * Read all registers (already in cache), encodes
+ * them to hex and returns it.
  *
+ * @return Returns all the registers hex-encoded.
  */
 static char *read_registers(void)
 {
@@ -274,7 +302,12 @@ static char *read_registers(void)
 
 #ifdef USE_MOCKS
 /**
+ * @brief Reads from a 'fake' memory (filled with NOPs)
+ * and returns it.
  *
+ * @param len Desired memory size.
+ *
+ * @return Returns the fake memory.
  */
 static char *read_mock_memory(size_t len)
 {
@@ -294,7 +327,10 @@ static char *read_mock_memory(size_t len)
 #endif
 
 /**
+ * @brief Reads the current EIP (physical)
+ * from the cache and returns it.
  *
+ * @return Returns the physical EIP.
  */
 static uint32_t get_current_eip_phys(void) {
 	return TO_PHYS(x86_regs.r.cs, x86_regs.r.eip);
@@ -347,7 +383,8 @@ already_physical:
  * ------------------------------------------------------------------*/
 
 /**
- *
+ * @brief Handles the single-step command from
+ * GDB.
  */
 static void handle_gdb_single_step(void)
 {
@@ -362,7 +399,7 @@ static void handle_gdb_single_step(void)
 }
 
 /**
- *
+ * @brief Sends the continue to the serial device.
  */
 static void send_gdb_continue(void)
 {
@@ -372,7 +409,7 @@ static void send_gdb_continue(void)
 }
 
 /**
- *
+ * @brief Handles the 'continue' command from GDB.
  */
 static void handle_gdb_continue(void)
 {
@@ -407,22 +444,31 @@ static void handle_gdb_continue(void)
 }
 
 /**
- *
+ * @brief Handles the 'halt reason (?)' command from GDB.
  */
 static void handle_gdb_halt_reason(void) {
-	/* due to signal (SIGTRAP, 5). */
 	send_gdb_halt_reason();
 }
 
 /**
- *
+ * @brief Handle he 'read registers (g)' command from GDB.
  */
 static void handle_gdb_read_registers(void) {
 	send_gdb_cmd(read_registers(), 128);
 }
 
 /**
+ * @brief Handles the 'read memory (m)' command from GDB.
  *
+ * @param Message buffer to be parsed.
+ * @param Buffer length.
+ *
+ * @return Returns 0 if the request is valid, -1 otherwise.
+ *
+ * @note Please note that the actual memory read is
+ * done by the serial device. This routine only parses
+ * the command and forward the request to the serial
+ * device.
  */
 static int handle_gdb_read_memory(const char *buff, size_t len)
 {
@@ -506,7 +552,17 @@ static int handle_gdb_read_memory(const char *buff, size_t len)
 }
 
 /**
+ * @brief Handles the 'write memory (M)' command from GDB.
  *
+ * @param Message buffer to be parsed.
+ * @param Buffer length.
+ *
+ * @return Returns 0 if the request is valid, -1 otherwise.
+ *
+ * @note Please note that the actual memory write is
+ * done by the serial device. This routine only parses
+ * the command and forward the request to the serial
+ * device.
  */
 static int handle_gdb_write_memory_hex(const char *buff, size_t len)
 {
@@ -538,12 +594,30 @@ static int handle_gdb_write_memory_hex(const char *buff, size_t len)
 	send_serial_byte(SERIAL_STATE_WRITE_MEM_CMD);
 	send_serial_dword(addr);
 	send_serial_word(amnt);
-	send_all(serial_fd, memory, amnt, 0);
+	send_all(serial_fd, memory, amnt);
 	return (0);
 }
 
 /**
+ * @brief Handles the 'add breakpoint (Zn)' command from GDB.
  *
+ * This routine handles all kinds of breakpoints that GDB
+ * might ask for, from Z0 to Z4. Please note that even
+ * SW breakpoints are handled as HW breakpoints, and this
+ * current implementation only supports 1 instruction
+ * breakpoint and 1 hw watchpoint (whether access or write).
+ *
+ * The only kind of breakpoint that is not supported is the
+ * 'Z3' or 'read watchpoint', because x86 does not supports
+ * them. However, GDB is smart enough to realize that and
+ * asks to use Z4 instead. When a Z4 breakpoints (emulating
+ * Z3) happens, all the writes are silently ignored and GDB
+ * continues to execute again.
+ *
+ * @param Message buffer to be parsed.
+ * @param Buffer length.
+ *
+ * @return Returns 0 if the request is valid, -1 otherwise.
  */
 static int handle_gdb_add_breakpoint(const char *buff, size_t len)
 {
@@ -600,7 +674,15 @@ static int handle_gdb_add_breakpoint(const char *buff, size_t len)
 }
 
 /**
+ * @brief Handles the 'remove breakpoint (zn)' command from GDB.
  *
+ * Since one breakpoint for instruction and one for data is
+ * supported, the address provided in the packet is ignored.
+ *
+ * @param Message buffer to be parsed.
+ * @param Buffer length.
+ *
+ * @return Returns 0 if the request is valid, -1 otherwise.
  */
 static int handle_gdb_remove_breakpoint(const char *buff, size_t len)
 {
@@ -638,7 +720,20 @@ static int handle_gdb_remove_breakpoint(const char *buff, size_t len)
 }
 
 /**
+ * @brief Handles the 'write register (P)' GDB command;
  *
+ * Please note the the segment registers and EIP,EFLAGS
+ * are 16-bit. An attempt to write a 32-bit value on them
+ * will emit an error.
+ *
+ * Also note that the mapping from what we receive from
+ * the serial device and the mapping expected by GDB
+ * differs, so there is a need to a conversion.
+ *
+ * @param buff Buffer to be parsed.
+ * @param len Buffer length.
+ *
+ * @return Returns 0 if the command is valid, -1 otherwise.
  */
 static int handle_gdb_write_register(const char *buff, size_t len)
 {
@@ -688,7 +783,9 @@ static int handle_gdb_write_register(const char *buff, size_t len)
 	return (0);
 }
 
-/**/
+/*
+ * Keeps all the variables for the GDB state machine here
+ */
 struct gdb_handle
 {
 	int  state;
@@ -702,7 +799,15 @@ struct gdb_handle
 };
 
 /**
+ * @brief Generic handler for all GDB commands/packets.
  *
+ * This routine handles all messages and dispatches each
+ * of them for the appropriated handler, if any. If not
+ * supported, a not-supported packet is sent to GDB.
+ *
+ * @param gh GDB state machine data.
+ *
+ * @return Always 0.
  */
 static int handle_gdb_cmd(struct gdb_handle *gh)
 {
@@ -710,7 +815,7 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 
 	csum_chk = (int) simple_read_int(gh->csum_read, 2);
 	if (csum_chk != gh->csum)
-		errw("Checksum for message: %s (%d) doesnt match: %d!\n",
+		errw("Checksum for message: %s (%d) doesn't match: %d!\n",
 			gh->cmd_buff, csum_chk, gh->csum);
 
 	/* Ack received message. */
@@ -788,13 +893,22 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
  * GDB handling state machine                                        *
  * ------------------------------------------------------------------*/
 
+/**
+ * @brief Handle the start of state for a GDB command.
+ *
+ * If any non-valid start of command is received, the char
+ * is silently ignored.
+ *
+ * @param gh GDB state machine data.
+ * @param curr_byte Current byte read.
+ */
 static void handle_gdb_state_start(struct gdb_handle *gh,
 	uint8_t curr_byte)
 {
 	/*
 	 * If Ctrl+C.
 	 *
-	 * Ctrl+C/break is a special command that doesnt need
+	 * Ctrl+C/break is a special command that doesn't need
 	 * to be ack'ed nor anything
 	 */
 	if (curr_byte == 3)
@@ -813,6 +927,12 @@ static void handle_gdb_state_start(struct gdb_handle *gh,
 	gh->cmd_idx = 0;
 }
 
+/**
+ * @brief Handle the receipt of the first checksum digit.
+ *
+ * @param gh GDB state machine data.
+ * @param curr_byte Current byte read.
+ */
 static inline void handle_gdb_state_csum_d1(struct gdb_handle *gh,
 	uint8_t curr_byte)
 {
@@ -820,6 +940,16 @@ static inline void handle_gdb_state_csum_d1(struct gdb_handle *gh,
 	gh->state = GDB_STATE_CSUM_D2;
 }
 
+/**
+ * @brief Handle the receipt of the last checksum digit.
+ *
+ * This also marks the end of the command, so the command
+ * in this stage is completely received and ready to be
+ * parsed.
+ *
+ * @param gh GDB state machine data.
+ * @param curr_byte Current byte read.
+ */
 static inline void handle_gdb_state_csum_d2(struct gdb_handle *gh,
 	uint8_t curr_byte)
 {
@@ -834,6 +964,15 @@ static inline void handle_gdb_state_csum_d2(struct gdb_handle *gh,
 		gh->cmd_buff, gh->csum, gh->csum_read);
 }
 
+/**
+ * @brief Handle the command data.
+ *
+ * While already received a command, this routine saves its
+ * content until the marker of end-of-command (#).
+ *
+ * @param gh GDB state machine data.
+ * @param curr_byte Current byte read.
+ */
 static inline void handle_gdb_state_cmd(struct gdb_handle *gh,
 	uint8_t curr_byte)
 {
@@ -853,7 +992,11 @@ static inline void handle_gdb_state_cmd(struct gdb_handle *gh,
 }
 
 /**
+ * @brief For each byte received, calls the appropriate
+ * handler, accordingly with the byte and the current
+ * state.
  *
+ * @param hfd Socket handler (not used).
  */
 void handle_gdb_msg(struct handler_fd *hfd)
 {
@@ -895,7 +1038,19 @@ void handle_gdb_msg(struct handler_fd *hfd)
  * ------------------------------------------------------------------*/
 
 /**
+ * @brief Handles a read memory.
  *
+ * In this point the serial device had already read the
+ * memory and sent to the bridge. The memory is (almost)
+ * ready to be sent to GDB.
+ *
+ * *Almost because while in interrupt-based mode, the
+ * contents of the memory will change in order to keep
+ * the CPU cool (hlt+jmp hlt). Due to that, if the
+ * memory read overlaps the overwritten instructions,
+ * we need to patch with the original instructions.
+ *
+ * @return Always 0.
  */
 static int handle_serial_receive_read_memory(void)
 {
@@ -960,7 +1115,15 @@ no_patch:
 }
 
 /**
+ * @brief Handles the data received when the machine stops.
  *
+ * Whenever the debugger stops, when machine sends to us
+ * multiple data, including all of its registers. This
+ * function takes all these registers and saves them
+ * into the cache, as well as send the appropriate
+ * messages to GDB to signalize that we're stopped.
+ *
+ * @param x86_rm Real mode x86 registers.
  */
 static void handle_serial_single_step_stop(struct srm_x86_regs *x86_rm)
 {
@@ -1028,6 +1191,7 @@ static void handle_serial_single_step_stop(struct srm_x86_regs *x86_rm)
  * Serial handling state machine                                     *
  * ------------------------------------------------------------------*/
 
+/* Serial state machine data. */
 struct serial_handle
 {
 	int  state;
@@ -1040,6 +1204,22 @@ struct serial_handle
 };
 
 
+/**
+ * @brief Handle the start of state for a serial command.
+ *
+ * If any non-valid start of command is received, the char
+ * is silently ignored.
+ *
+ * Valid start states are: stop, read-memory or ok
+ *
+ * @param sh Serial state machine data.
+ * @param curr_byte Current byte read.
+ *
+ * @note The messages sent from serial, are, in fact,
+ * responses from earlier GDB messages, so thats why
+ * number of possible responses are small: most of the
+ * commands only an 'OK' is required.
+ */
 static void handle_serial_state_start(struct serial_handle *sh,
 	uint8_t curr_byte)
 {
@@ -1058,6 +1238,15 @@ static void handle_serial_state_start(struct serial_handle *sh,
 		send_gdb_ok();
 }
 
+/**
+ * @brief Handle the machine stop data and reason.
+ *
+ * This function grabs the stop data and calls the appropriate
+ * handler.
+ *
+ * @param sh Serial state machine data.
+ * @param Current byte read.
+ */
 static void handle_serial_state_ss(struct serial_handle *sh,
 	uint8_t curr_byte)
 {
@@ -1075,6 +1264,16 @@ static void handle_serial_state_ss(struct serial_handle *sh,
 	}
 }
 
+/**
+ * @brief Handles the debugger response to an earlier
+ * GDB read memory command.
+ *
+ * @param sh Serial state data.
+ * @param curr_byte Current byte read.
+ *
+ * @note The data length is already saved when GDB
+ * asks to read.
+ */
 static void handle_serial_state_read_mem_cmd(struct serial_handle *sh,
 	uint8_t curr_byte)
 {
@@ -1088,7 +1287,11 @@ static void handle_serial_state_read_mem_cmd(struct serial_handle *sh,
 
 
 /**
+ * @brief For each byte received, calls the appropriate
+ * handler, accordingly with the byte and the current
+ * state.
  *
+ * @param hfd Socket handler (not used).
  */
 void handle_serial_msg(struct handler_fd *hfd)
 {
@@ -1135,7 +1338,15 @@ void handle_serial_msg(struct handler_fd *hfd)
  * ------------------------------------------------------------------*/
 
 /**
+ * @brief Handles the accept() when the GDB client attempts
+ * to connect.
  *
+ * This routine also checks if its the right moment to receive
+ * a GDB connection: the bridge must have a valid connection
+ * with the serial device and the device must be already
+ * in 'break', waiting for the debugger to proceed.
+ *
+ * @param hfd Handler structure.
  */
 void handle_accept_gdb(struct handler_fd *hfd)
 {
@@ -1158,7 +1369,13 @@ void handle_accept_gdb(struct handler_fd *hfd)
 }
 
 /**
+ * @brief Handles the accept() when the serial client (VMs)
+ * attempts to connect.
  *
+ * This is only useful for VMs and its not used for
+ * real hardware.s
+ *
+ * @param hfd Handler structure.
  */
 void handle_accept_serial(struct handler_fd *hfd)
 {
