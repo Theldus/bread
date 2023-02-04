@@ -479,11 +479,11 @@ static int handle_gdb_read_memory(const char *buff, size_t len)
 
 	/* Skip first 'm'. */
 	expect_char('m', ptr, len);
-	addr = read_int(ptr, &len, &ptr);
+	addr = read_int(ptr, &len, &ptr, 16);
 	expect_char(',', ptr, len);
 
 	/* Get amount. */
-	amnt = simple_read_int(ptr, len);
+	amnt = simple_read_int(ptr, len, 16);
 
 	/*
 	 * Reading memory is tricky: GDB does not know
@@ -573,11 +573,11 @@ static int handle_gdb_write_memory_hex(const char *buff, size_t len)
 
 	/* Skip first 'M'. */
 	expect_char('M', ptr, len);
-	addr = read_int(ptr, &len, &ptr);
+	addr = read_int(ptr, &len, &ptr, 16);
 	expect_char(',', ptr, len);
 
 	/* Get amount. */
-	amnt = read_int(ptr, &len, &ptr);
+	amnt = read_int(ptr, &len, &ptr, 16);
 	expect_char(':', ptr, len);
 
 	/* If 0, just send that we support X command and quit. */
@@ -630,7 +630,7 @@ static int handle_gdb_add_breakpoint(const char *buff, size_t len)
 	expect_char(',', ptr, len);
 
 	/* Get breakpoint address. */
-	addr = read_int(ptr, &len, &ptr);
+	addr = read_int(ptr, &len, &ptr, 16);
 	expect_char(',', ptr, len);
 
 	/* Maybe convert to physical, if not already, */
@@ -748,7 +748,7 @@ static int handle_gdb_write_register(const char *buff, size_t len)
 	ptr = buff;
 
 	expect_char('P', ptr, len);
-	reg_num_gdb = read_int(ptr, &len, &ptr);
+	reg_num_gdb = read_int(ptr, &len, &ptr, 16);
 	expect_char('=', ptr, len);
 	dec = decode_hex(ptr, 4);
 
@@ -813,7 +813,7 @@ static int handle_gdb_cmd(struct gdb_handle *gh)
 {
 	int csum_chk;
 
-	csum_chk = (int) simple_read_int(gh->csum_read, 2);
+	csum_chk = (int) simple_read_int(gh->csum_read, 2, 16);
 	if (csum_chk != gh->csum)
 		errw("Checksum for message: %s (%d) doesn't match: %d!\n",
 			gh->cmd_buff, csum_chk, gh->csum);

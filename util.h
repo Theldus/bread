@@ -84,7 +84,8 @@
 	extern char *encode_hex(const char *data, size_t len);
 	extern char *decode_hex(const char *data, size_t len);
 	extern uint32_t read_int(const char *buff, size_t *len,
-		const char **endptr);
-	extern uint32_t simple_read_int(const char *buf, size_t len);
+		const char **endptr, int base);
+	extern uint32_t simple_read_int(const char *buf, size_t len,
+		int base);
 
 #endif /* UTIL_H */

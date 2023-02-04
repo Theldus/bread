@@ -133,10 +133,12 @@ char *decode_hex(const char *data, size_t len)
  * @param endptr If not NULL, the position for the first
  *               non-hex digit character is saved.
  *
+ * @param base   Number base, whether 10 or 16.
+ *
  * @return Returns the integer read.
  */
 uint32_t read_int(const char *buff, size_t *len,
-	const char **endptr)
+	const char **endptr, int base)
 {
 	int32_t ret;
 	char c;
@@ -150,7 +152,7 @@ uint32_t read_int(const char *buff, size_t *len,
 
 		if (c >= '0' && c <= '9')
 			v = (c - '0');
-		else if (c >= 'a' && c <= 'f')
+		else if (base == 16 && (c >= 'a' && c <= 'f'))
 			v = (c - 'a' + 10);
 		else
 		{
@@ -161,7 +163,7 @@ uint32_t read_int(const char *buff, size_t *len,
 			}
 			goto out;
 		}
-		ret = ret * 16 + v;
+		ret = ret * base + v;
 	}
 
 out:
@@ -175,11 +177,12 @@ out:
  *
  * @param buf Buffer to be read.
  * @param len Buffer length.
+ * @param base Number base, whether 10 or 16.
  *
  * @return Returns the integer read.
  */
-uint32_t simple_read_int(const char *buf, size_t len)
+uint32_t simple_read_int(const char *buf, size_t len, int base)
 {
 	size_t l = len;
-	return read_int(buf, &l, NULL);
+	return read_int(buf, &l, NULL, base);
 }
