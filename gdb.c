@@ -6,7 +6,9 @@
 #include "net.h"
 #include "util.h"
 
+#ifdef VERBOSE
 #define DUMP_REGS 1
+#endif
 
 /* Convert a given SEG:OFF to physical address. */
 #define TO_PHYS(S,O) (((S) << 4)+(O))

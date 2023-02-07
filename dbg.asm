@@ -1,9 +1,10 @@
 [BITS 16]
-[ORG 0x0000]
+[ORG 0x0000] ; >> CHANGE_HERE <<
 
 %include "constants.inc"
 
 ;
+; Debugger entry point
 ;
 ; Register usage:
 ; 0  DS
@@ -20,8 +21,8 @@
 ; 22 CS
 ;
 _start:
-	pusha
-	pushf
+	pushad
+	pushfd
 	push ds
 
 	; Setup UART for early error messages
@@ -62,16 +63,12 @@ _start:
 	mov word [bx+(1*4)+0], handler_int1
 	mov word [bx+(1*4)+2], cs
 
-	; Set int3 handler
-	mov word [bx+(3*4)+0], handler_int3
-	mov word [bx+(3*4)+2], cs
-
+%ifndef UART_POLLING
 	; Serial/COM1 handler
 	mov word [bx+(36*4)+0], handler_int4_com1
 	mov word [bx+(36*4)+2], cs
 
 	; Configure our PIC to receive ints from COM1
-%ifndef UART_POLLING
 	call setup_pic
 	sti
 %endif
@@ -95,40 +92,41 @@ _start:
 	or word [bp], EFLAGS_TF
 	popf
 
-.label:
-	; Original instructions here
-	nop
-	nop
-	nop
-	xchg dx, dx
-	mov eax, eax
-	mov ebx, ebx
-	nop
+	xor dx, dx
+.random_label:
+	; Random instructions to dbg before return
+	; to real code
 	nop
 	nop
 	inc eax
 	nop
 	nop
-	inc byte [cs:lblqlqr]
+	inc dword [cs:random_data] ; Write watchpoint
 	nop
 	nop
 	nop
-	mov ebx, dword [cs:lblqlqr] ; 0x1009F
+	mov ebx, dword [cs:random_data] ; Read watchpoint
 	nop
-	xchg cx, cx
-	nop
-	xchg dx, dx
-	jmp .label
-	xchg dx, dx
+	cmp dx, 5
+	jne .random_label
 
 .exit:
-	; Return from caller/BIOS
+	; Restore old registers and flags
 	pop ds
-	popf
-	popa
+	popfd
+	popad
+
+	; >> CHANGE_HERE <<
+	; Overwritten BIOS instructions below (if any)
+	nop
+	nop
+	nop
+	nop
+
+	; Return from caller/BIOS
 	retf
 
-lblqlqr: dd 0xdeadbeef
+random_data: dd 0xdeadbeef
 
 ; Padding bytes to 'protect' our handler:
 ; because when single-stepping 'retf'
@@ -140,7 +138,7 @@ nop
 nop
 
 ;
-;
+; INT1 handler
 ;
 ;
 ; Stack order:
@@ -242,21 +240,11 @@ exit_int1:
 exit_int1_iret:
 	iret
 
-
 ;
+; Serial/COM1 handler & main state machine
 ;
-;
-handler_int3:
-	nop
-	iret
-	nop
-
-
-
-
-;
-;
-;
+; All the commands are done here, even on polling
+; mode!
 ;
 ; Stack order:
 ;  Same as int1
@@ -514,7 +502,7 @@ read_uart:
 	; Add 'software' breakpoint
 	; ---------------------------------------------
 
-	; Note: Although this is expected to be a sw reakpoint,
+	; Note: Although this is expected to be a sw breakpoint,
 	; the breakpoints used here are hardware breakpoints
 	; instead. This was chosen because there would be some
 	; complications with int3 and the interrupt-based approach,
@@ -678,7 +666,7 @@ exit_int4:
 
 %ifndef UART_POLLING
 ;
-;
+; Configure PIC master & slave
 ;
 setup_pic:
 	; Starts initialization sequence
@@ -708,6 +696,7 @@ setup_pic:
 %endif
 
 ;
+; Configure UART
 ;
 ; 8 bits, no parity, one stop bit
 ;
@@ -864,7 +853,7 @@ send_stop_msg:
 .normal_break:
 	mov bl, STOP_REASON_NORMAL
 	call uart_write_byte
-	call uart_write_dword ; stub value, shoud not be used
+	call uart_write_dword ; stub value, should not be used
 	ret
 
 ;

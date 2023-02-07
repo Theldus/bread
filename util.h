@@ -76,10 +76,14 @@
 			return 1; \
 		} while (0)
 
+#ifdef VERBOSE
 	#define LOG_CMD_REC(...) \
 		do { \
 			fprintf(stderr, __VA_ARGS__); \
 		} while (0)
+#else
+	#define LOG_CMD_REC
+#endif
 
 	extern char *encode_hex(const char *data, size_t len);
 	extern char *decode_hex(const char *data, size_t len);

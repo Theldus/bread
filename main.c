@@ -68,10 +68,7 @@ void parse_args(int argc, char **argv)
 		}
 	}
 	else if (!args.device)
-	{
-		if (args.serial_port)
 		args.device = "/dev/ttyUSB0";
-	}
 
 	/* Validate ports. */
 	if (!args.gdb_port || (args.mode == MODE_SOCKET &&
