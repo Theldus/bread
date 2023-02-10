@@ -57,4 +57,41 @@ By implementing the GDB stub, BREAD has many features out-of-the-box. The follow
 [^bp_note]: Breakpoints are implemented as hardware breakpoints and therefore have a limited number of available breakpoints. In the current implementation, only 1 active breakpoint at a time!
 [^watchp_note]: Hardware watchpoints (like breakpoints) are also only supported one at a time.
 
-### bbbb
+## Limitations
+How many? Yes.
+Since the code being debugged is unaware that it is being debugged, it can interfere with the debugger in several ways, to name a few:
+
+- Protected-mode jump: If the debugged code switches to protected-mode, the structures for interrupt handlers, etc. are altered and the debugger will no longer be invoked at that point in the code. However, it is possible that a jump back to real mode (restoring the full previous state) will allow the debugger to work again.
+
+- IDT changes: If for any reason the debugged code changes the IDT or its base address, the debugger handlers will not be properly invoked.
+
+- Stack: BREAD uses a stack and assumes it exists! It should not be inserted into locations where the stack has not yet been configured.
+
+For BIOS debugging, there are other limitations such as: it is not possible to debug the BIOS code from the very beggining (bootblock), as a minimum setup (such as RAM) is required for BREAD to function correctly. However, it is possible to perform a "warm-reboot" by setting CS:EIP to `F000:FFF0`. In this scenario, the BIOS initialization can be followed again, as BREAD is already properly loaded. Please note that the "code-path" of BIOS initialization during a warm-reboot may be different from a cold-reboot and the execution flow may not be exactly the same.
+
+## Building
+Building only requires GNU Make, a C compiler (such as GCC, Clang, or TCC), NASM, and a Linux machine.
+
+The debugger has two modes of operation: interrupt-based (default) and polling.
+
+### Interrupt-based mode
+The interrupt-based mode sets up the PIC and receives UART interrupts. In this mode, the CPU stays in 'halt' until it receives commands for the debugger, which prevents it from using 100% of the CPU and keeps it cool. However, interrupts are not always enabled, making it impossible to debug certain portions of code. This is where the polling mode comes in.
+
+#### Building
+```bash
+$ git clone https://github.com/Theldus/BREAD.git
+$ cd BREAD/
+$ make
+```
+
+### Polling mode
+To overcome the problems with the interrupt approach, the polling mode does not use hardware interrupts and should work in most scenarios. **If in doubt, use this mode**. The disadvantage of polling mode is the excessive CPU usage.
+
+#### Building
+```bash
+$ git clone https://github.com/Theldus/BREAD.git
+$ cd BREAD/
+$ make UART_POLLING=yes
+```
+
+## Usage
