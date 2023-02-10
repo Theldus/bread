@@ -95,3 +95,63 @@ $ make UART_POLLING=yes
 ```
 
 ## Usage
+Using BREAD only requires a serial cable (and yes, your motherboard __has__ a COM header, check the manual) and injecting the code at the appropriate location.
+
+To inject, minimal changes must be made in dbg.asm (the debugger's src). The code's 'ORG' must be changed and also how the code should return (look for "`>> CHANGE_HERE <<`" in the code for places that need to be changed).
+
+### For BIOS (e.g., AMI Legacy):
+Assuming that your module was invoked from a '`far call`', you should consider how your code was invoked in the first place and make the necessary adjustments.
+
+Using an AMI legacy as an example, where the debugger module will be placed in the place of the BIOS logo (`0x108200` or `FFFF:8210`) and the following instructions in the ROM have been replaced with a far call to the module:
+```asm
+...
+00017EF2  06                push es
+00017EF3  1E                push ds
+00017EF4  07                pop es
+00017EF5  8BD8              mov bx,ax     -┐ replaced by: call 0xFFFF:0x8210 (dbg.bin)
+00017EF7  B8024F            mov ax,0x4f02 -┘
+00017EFA  CD10              int 0x10
+00017EFC  07                pop es
+00017EFD  C3                ret
+...
+```
+the following patch is sufficient:
+```patch
+diff --git a/dbg.asm b/dbg.asm
+index caedb70..88024d3 100644
+--- a/dbg.asm
++++ b/dbg.asm
+@@ -21,7 +21,7 @@
+ ; SOFTWARE.
+ 
+ [BITS 16]
+-[ORG 0x0000] ; >> CHANGE_HERE <<
++[ORG 0x8210] ; >> CHANGE_HERE <<
+ 
+ %include "constants.inc"
+ 
+@@ -140,8 +140,8 @@ _start:
+ 
+ 	; >> CHANGE_HERE <<
+ 	; Overwritten BIOS instructions below (if any)
+-	nop
+-	nop
++	mov ax, 0x4F02
++	int 0x10
+ 	nop
+ 	nop
+```
+
+Did you see the point? If you have overridden a few instructions from your ROM to invoke the debugger code, they need to be re-inserted before returning from the debugger.
+
+The reason I replaced these two instructions is because they are invoked right before the BIOS starts displaying the logo on the screen (which is now the debugger), this guarantees us a few things:
+
+- The logo module (which is the debugger) has already been loaded into memory
+- Video interrupts from the BIOS already work
+- The code around it indicates that the stack already exists
+
+Finding a good location to call the debugger (where the BIOS has already initialized enough, but not too late) can be challenging, but it is possible.
+
+After this, `dbg.bin` is ready to be inserted into the correct position in the ROM.
+
+### Bridge
