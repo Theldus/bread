@@ -33,6 +33,8 @@ ifeq ($(VERBOSE), yes)
 endif
 
 # Define if polling or not
+UART_POLLING ?= yes
+
 ifeq ($(UART_POLLING), yes)
 	CFLAGS   += -DUART_POLLING
 	ASMFLAGS += -DUART_POLLING
