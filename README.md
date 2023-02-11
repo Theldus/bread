@@ -152,6 +152,53 @@ Finding a good location to call the debugger (where the BIOS has already initial
 
 After this, `dbg.bin` is ready to be inserted into the correct position in the ROM.
 
+### For DOS
+Debugging DOS programs with BREAD is a bit tricky, but possible:
+
+#### 1. Edit `dbg.asm` so that DOS understands it as a valid DOS program:
+   - Set the ORG to 0x100
+   - Leave the useful code away from the beginning of the file (`times`)
+   - Set the program output (`int 0x20`)
+
+The following patch addresses this:
+```patch
+diff --git a/dbg.asm b/dbg.asm
+index caedb70..b042d35 100644
+--- a/dbg.asm
++++ b/dbg.asm
+@@ -21,7 +21,10 @@
+ ; SOFTWARE.
+ 
+ [BITS 16]
+-[ORG 0x0000] ; >> CHANGE_HERE <<
++[ORG 0x100]
++
++times 40*1024 db 0x90 ; keep some distance,
++                      ; 40kB should be enough
+ 
+ %include "constants.inc"
+ 
+@@ -140,7 +143,7 @@ _start:
+ 
+ 	; >> CHANGE_HERE <<
+ 	; Overwritten BIOS instructions below (if any)
+-	nop
++	int 0x20 ; DOS interrupt to exit process
+ 	nop
+```
+
+#### 2. Create a minimal bootable DOS environment and run
+Create a bootable FreeDOS (or DOS) floppy image containing just the kernel and the terminal: `KERNEL.SYS` and `COMMAND.COM`. Also add to this floppy image the program to be debugged and the `DBG.COM` (`dbg.bin`).
+
+The following steps should be taken after creating the image:
+
+- Boot it with `bridge` already opened (refer to the next section for instructions).
+- Execute `DBG.COM`.
+- Once execution stops, use GDB to add any desired breakpoints and watchpoints relative to the next process you want to debug. Then, allow the `DBG.COM` process to continue until it finishes.
+- Run the process that you want to debug. The previously-configured breakpoints and watchpoints should trigger as expected.
+
+It is important to note that DOS does not erase the process image after it exits. As a result, the debugger can be configured like any other DOS program and the appropriate breakpoints can be set. The beginning of the debugger is filled with NOPs, so it is anticipated that the new process will not overwrite the debugger's memory, allowing it to continue functioning even after it appears to be "finished". This allows BREaD to debug other programs, including DOS itself.
+
 ### Bridge
 Bridge is the glue between the debugger and GDB and can be used in different ways, whether on real hardware or virtual machine.
 
@@ -194,3 +241,15 @@ For use in a virtual machine, the execution order changes slightly:
 _In both cases, be sure to run GDB inside the BRIDGE root folder, as there are auxiliary files in this folder for GDB to work properly in 16-bit._
 
 [^vm_note]: Please note that debug registers do not work by default on VMs. For bochs, it needs to be compiled with the `--enable-x86-debugger=yes` flag. For Qemu, it needs to run with KVM enabled: `--enable-kvm` (`make qemu` already does this).
+
+## Contributing
+
+BREAD is always open to the community and willing to accept contributions,
+whether with issues, documentation, testing, new features, bugfixes, typos, and
+etc. Welcome aboard.
+
+## License and Authors
+
+BREAD is licensed under MIT License. Written by Davidson Francis and
+(hopefully) other
+[contributors](https://github.com/Theldus/bread/graphs/contributors).
