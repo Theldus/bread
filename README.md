@@ -72,10 +72,10 @@ For BIOS debugging, there are other limitations such as: it is not possible to d
 ## Building
 Building only requires GNU Make, a C compiler (such as GCC, Clang, or TCC), NASM, and a Linux machine.
 
-The debugger has two modes of operation: interrupt-based (default) and polling.
+The debugger has two modes of operation: polling (default) and interrupt-based:
 
-### Interrupt-based mode
-The interrupt-based mode sets up the PIC and receives UART interrupts. In this mode, the CPU stays in 'halt' until it receives commands for the debugger, which prevents it from using 100% of the CPU and keeps it cool. However, interrupts are not always enabled, making it impossible to debug certain portions of code. This is where the polling mode comes in.
+### Polling mode
+Polling mode is the simplest approach and should work well in a variety of environments. However, due the polling nature, there is a high CPU usage:
 
 #### Building
 ```bash
@@ -84,14 +84,14 @@ $ cd BREAD/
 $ make
 ```
 
-### Polling mode
-To overcome the problems with the interrupt approach, the polling mode does not use hardware interrupts and should work in most scenarios. **If in doubt, use this mode**. The disadvantage of polling mode is the excessive CPU usage.
+### Interrupt-based mode
+The interrupt-based mode optimizes CPU utilization by utilizing UART interrupts to receive new data, instead of constantly polling for it. This results in the CPU remaining in a 'halt' state until receiving commands from the debugger, and thus, preventing it from consuming 100% of the CPU's resources. However, as interrupts are not always enabled, this mode is not set as the default option:
 
 #### Building
 ```bash
 $ git clone https://github.com/Theldus/BREAD.git
 $ cd BREAD/
-$ make UART_POLLING=yes
+$ make UART_POLLING=no
 ```
 
 ## Usage
@@ -100,8 +100,6 @@ Using BREAD only requires a serial cable (and yes, your motherboard __has__ a CO
 To inject, minimal changes must be made in dbg.asm (the debugger's src). The code's 'ORG' must be changed and also how the code should return (look for "`>> CHANGE_HERE <<`" in the code for places that need to be changed).
 
 ### For BIOS (e.g., AMI Legacy):
-Assuming that your module was invoked from a '`far call`', you should consider how your code was invoked in the first place and make the necessary adjustments.
-
 Using an AMI legacy as an example, where the debugger module will be placed in the place of the BIOS logo (`0x108200` or `FFFF:8210`) and the following instructions in the ROM have been replaced with a far call to the module:
 ```asm
 ...
@@ -142,9 +140,9 @@ index caedb70..88024d3 100644
  	nop
 ```
 
-Did you see the point? If you have overridden a few instructions from your ROM to invoke the debugger code, they need to be re-inserted before returning from the debugger.
+It is important to note that if you have altered a few instructions within your ROM to invoke the debugger code, they must be restored prior to returning from the debugger.
 
-The reason I replaced these two instructions is because they are invoked right before the BIOS starts displaying the logo on the screen (which is now the debugger), this guarantees us a few things:
+The reason for replacing these two instructions is that they are executed just prior to the BIOS displaying the logo on the screen, which is now the debugger, ensuring a few key points:
 
 - The logo module (which is the debugger) has already been loaded into memory
 - Video interrupts from the BIOS already work
@@ -155,3 +153,44 @@ Finding a good location to call the debugger (where the BIOS has already initial
 After this, `dbg.bin` is ready to be inserted into the correct position in the ROM.
 
 ### Bridge
+Bridge is the glue between the debugger and GDB and can be used in different ways, whether on real hardware or virtual machine.
+
+Its parameters are:
+```text
+Usage: ./bridge [options]
+Options:
+  -s Enable serial through socket, instead of device
+  -d <path> Replaces the default device path (/dev/ttyUSB0)
+            (does not work if -s is enabled)
+  -p <port> Serial port (as socket), default: 2345
+  -g <port> GDB port, default: 1234
+  -h This help
+
+If no options are passed the default behavior is:
+  ./bridge -d /dev/ttyUSB0 -g 1234
+
+Minimal recommended usages:
+  ./bridge -s (socket mode, serial on 2345 and GDB on 1234)
+  ./bridge    (device mode, serial on /dev/ttyUSB0 and GDB on 1234)
+```
+
+#### Real hardware
+To use it on real hardware, just invoke it without parameters. Optionally, you can change the device path with the `-d` parameter:
+
+##### Execution flow:
+1. Connect serial cable to PC
+2. Run bridge (`./bridge` or `./bridge -d /path/to/device`)
+3. Turn on the PC to be debugged
+4. Wait for the message: `Single-stepped, you can now connect GDB!` and then launch GDB: `gdb`.
+
+#### Virtual machine
+For use in a virtual machine, the execution order changes slightly:
+
+##### Execution flow:
+1. Run bridge (`./bridge` or `./bridge -d /path/to/device`)
+2. Open the VM[^vm_note] (such as: `make bochs` or `make qemu`)
+3. Wait for the message: `Single-stepped, you can now connect GDB!` and then launch GDB: `gdb`.
+
+_In both cases, be sure to run GDB inside the BRIDGE root folder, as there are auxiliary files in this folder for GDB to work properly in 16-bit._
+
+[^vm_note]: Please note that debug registers do not work by default on VMs. For bochs, it needs to be compiled with the `--enable-x86-debugger=yes` flag. For Qemu, it needs to run with KVM enabled: `--enable-kvm` (`make qemu` already does this).
