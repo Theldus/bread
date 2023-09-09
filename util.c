@@ -105,7 +105,7 @@ static inline int to_value(int ch)
 char *encode_hex(const char *data, size_t len)
 {
 	char *tmp;
-	int i;
+	size_t i;
 
 	increase_buffer(len * 2);
 
@@ -132,7 +132,7 @@ char *encode_hex(const char *data, size_t len)
 char *decode_hex(const char *data, size_t len)
 {
 	char *ptr;
-	int i;
+	size_t i;
 
 	increase_buffer(len);
 
@@ -170,7 +170,7 @@ uint32_t read_int(const char *buff, size_t *len,
 
 	ret = 0;
 
-	for (int i = 0; i < *len; i++)
+	for (size_t i = 0; i < *len; i++)
 	{
 		c = tolower(buff[i]);
 

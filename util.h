@@ -106,7 +106,7 @@
 			fprintf(stderr, __VA_ARGS__); \
 		} while (0)
 #else
-	#define LOG_CMD_REC
+	#define LOG_CMD_REC(...)
 #endif
 
 	extern char *encode_hex(const char *data, size_t len);

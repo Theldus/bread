@@ -195,7 +195,7 @@ static union ux86_regs
  */
 static ssize_t send_gdb_cmd(const char *buff, size_t len)
 {
-	int i;
+	size_t i;
 	int csum;
 	ssize_t ret;
 	char csum_str[3];
@@ -298,9 +298,10 @@ static void send_serial_ctrlc(void) {
 static char *read_registers(void)
 {
 	char *buff;
-	int i;
 
 #ifdef MOCK_REGISTERS
+	int i;
+
 	for (i = 0; i < MAX_REGS; i++)
 	{
 		if (i & 1)
@@ -1010,7 +1011,7 @@ static inline void handle_gdb_state_cmd(struct gdb_handle *gh,
 	gh->csum += curr_byte;
 
 	/* Emit a warning if command exceeds buffer size. */
-	if (gh->cmd_idx > sizeof gh->cmd_buff - 2)
+	if ((size_t)gh->cmd_idx > sizeof gh->cmd_buff - 2)
 		errx("Command exceeds buffer size (%zu): %s\n",
 			sizeof gh->cmd_buff, gh->cmd_buff);
 
@@ -1026,6 +1027,8 @@ static inline void handle_gdb_state_cmd(struct gdb_handle *gh,
  */
 void handle_gdb_msg(struct handler_fd *hfd)
 {
+	((void)hfd);
+
 	int i;
 	ssize_t ret;
 	uint8_t curr_byte;
@@ -1129,10 +1132,10 @@ static int handle_serial_receive_read_memory(void)
 	for (k = 0; k < count; k++, i++, j++)
 		dump_buffer[i] = x86_stop_data.d.saved_insns[j];
 
+no_patch:
 #endif /* !UART_POLLING. */
 
-no_patch:
-	memory = encode_hex(dump_buffer, last_dump_amnt);
+	memory = encode_hex((char*)dump_buffer, last_dump_amnt);
 	free(dump_buffer);
 
 	/* Send memory to GDB. */
@@ -1279,11 +1282,11 @@ static void handle_serial_state_ss(struct serial_handle *sh,
 	size_t x86_size = sizeof(union x86_stop_data);
 
 	/* Save stopped data. */
-	if (sh->buff_idx < x86_size)
+	if ((size_t)sh->buff_idx < x86_size)
 		x86_stop_data.data[sh->buff_idx++] = curr_byte;
 
 	/* Check if ended. */
-	if (sh->buff_idx == x86_size)
+	if ((size_t)sh->buff_idx == x86_size)
 	{
 		sh->state = SERIAL_STATE_START;
 		handle_serial_single_step_stop(&x86_stop_data.d.x86_regs);

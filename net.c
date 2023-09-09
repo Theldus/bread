@@ -104,7 +104,7 @@ void setup_server(int *srv_fd, uint16_t port)
 	int reuse = 1;
 
 	*srv_fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (srv_fd < 0)
+	if (*srv_fd < 0)
 		errx("Unable to open socket!\n");
 
 	setsockopt(*srv_fd, SOL_SOCKET, SO_REUSEADDR,
@@ -137,7 +137,6 @@ static void restore_tty(void) {
  */
 void setup_serial(int *sfd, const char *sdev)
 {
-	speed_t spd;
 	struct termios tty;
 
 	/* Open device. */
