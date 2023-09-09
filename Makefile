@@ -22,7 +22,7 @@
 
 CC = cc
 #CFLAGS += -fsanitize=address
-CFLAGS += -MMD -MP
+CFLAGS += -MMD -MP -Wall -Wextra
 OBJ = gdb.o main.o net.o util.o
 DEP = $(patsubst %.d, .%.d, $(OBJ:.o=.d))
 BIN = bridge boot.bin dbg.bin bootable.img
