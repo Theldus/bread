@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-CC = cc
+CC ?= cc
 #CFLAGS += -fsanitize=address
 CFLAGS += -MMD -MP -Wall -Wextra
 OBJ = gdb.o main.o net.o util.o
