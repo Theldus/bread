@@ -1012,7 +1012,7 @@ static inline void handle_gdb_state_cmd(struct gdb_handle *gh,
 	/* Emit a warning if command exceeds buffer size. */
 	if (gh->cmd_idx > sizeof gh->cmd_buff - 2)
 		errx("Command exceeds buffer size (%zu): %s\n",
-			gh->cmd_buff, sizeof gh->cmd_buff);
+			sizeof gh->cmd_buff, gh->cmd_buff);
 
 	gh->cmd_buff[gh->cmd_idx++] = curr_byte;
 }
