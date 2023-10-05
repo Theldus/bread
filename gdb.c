@@ -79,7 +79,6 @@ static uint16_t last_dump_amnt;
 
 /* Breakpoint cache. */
 static uint32_t breakpoint_insn_addr;
-static int single_step_before_continue;
 
 /**
  * Mini-buffr to hold different byte-sized values
@@ -353,58 +352,6 @@ static char *read_mock_memory(size_t len)
 }
 #endif
 
-/**
- * @brief Reads the current EIP (physical)
- * from the cache and returns it.
- *
- * @return Returns the physical EIP.
- */
-static uint32_t get_current_eip_phys(void) {
-	return TO_PHYS(x86_regs.r.cs, x86_regs.r.eip);
-}
-
-
-/**
- * @brief Attempts to convert a passed address from GDB
- * to its physical counterpart.
- *
- * Since GDB does not know anything about SEG:OFF
- * the address passed through EIP is 'wrong'. This
- * function attempts to convert the given address
- * and then check if its similar to the current
- * SEG:OFF EIP, if so, the address probably is
- * physical
- *
- * @param addr Maybe not-physical address to be
- *             converted.
- *
- * @return Returns the same address, or the physical
- * converted address.
- *
- */
-static uint32_t to_physical(uint32_t addr)
-{
-	uint32_t phys1, phys2;
-	uint32_t ret;
-
-	ret = addr;
-
-	/*
-	 * Check if instruction is greater than threshold.
-	 *  512 bytes is just a guesstimate....
-	 */
-	phys1 = TO_PHYS(x86_regs.r.cs, addr);
-	phys2 = get_current_eip_phys();
-
-	if (ABS((int32_t)phys1 - (int32_t)phys2) >= 512)
-		goto already_physical;
-
-	ret = phys1;
-
-already_physical:
-	return (ret);
-}
-
 /* ------------------------------------------------------------------*
  * GDB handlers                                                      *
  * ------------------------------------------------------------------*/
@@ -431,41 +378,13 @@ static void handle_gdb_single_step(void)
 static void send_gdb_continue(void)
 {
 	have_x86_regs = 0;
-	single_step_before_continue = 0;
 	send_serial_byte(SERIAL_STATE_CONTINUE);
 }
 
 /**
  * @brief Handles the 'continue' command from GDB.
  */
-static void handle_gdb_continue(void)
-{
-	/*
-	 * Check if we should single-step first:
-	 *
-	 * If we are currently at the same address where we add the
-	 * breakpoint, we are in a dilemma, because how are we going
-	 * to execute the code if the break is the current code
-	 * itself?
-	 *
-	 * GDB catches on to this and issues a single-step before
-	 * the continue, which effectively solves the problem,
-	 * right? almost. GDB assumes linear memory and is unaware
-	 * of segment:offset, so it cannot compare a physical address
-	 * with the current CS+EIP and thus does not issue the
-	 * necessary single-step.
-	 *
-	 * To get around this, we need to mimic what GDB does, and
-	 * silently issue a single-step on its own before proceeding
-	 * with continue.
-	 */
-	if (breakpoint_insn_addr == get_current_eip_phys())
-	{
-		single_step_before_continue = 1;
-		handle_gdb_single_step();
-		return;
-	}
-
+static void handle_gdb_continue(void) {
 	/* Send to our serial-line that we want to continue. */
 	send_gdb_continue();
 }
@@ -513,33 +432,10 @@ static int handle_gdb_read_memory(const char *buff, size_t len)
 	amnt = simple_read_int(ptr, len, 16);
 
 	/*
-	 * Reading memory is tricky: GDB does not know
-	 * real-mode and assume the memory is linear.
-	 *
-	 * Because of this, we have to do some workarounds to avoid
-	 * possible problems:
-	 *   a)  All addresses sent to the debugger (serial) will be
-	 *       physical.
-	 *
-	 *   b)  The addresses that the GDB asks to read, need to be
-	 *       converted to physical, which leads us to:
-	 *
-	 *   b1) Instruction addresses: if addr*cs is close to the
-	 *       current eip*cs, then GDB is asking to read a
-	 *       a instruction address. We proceed to convert the
-	 *       address.
-	 *
-	 *   b2) If b1) is false, the address to be read is already
-	 *       physical (requested by the user, who will always
-	 *       provide physical addresses), and will be passed
-	 *       without conversions to the debugger.
-	 *
-	 *   b3) There is a possibility that GDB also asks to read
-	 *       from the stack, think about that later.
+	 * The addresses asked by GDB are already physical,
+	 * since we convert them at handle_serial_single_step_stop()
 	 */
 
-	/* Convert to physical. */
-	addr = to_physical(addr);
 	last_dump_phys_addr = addr;
 	last_dump_amnt = amnt;
 
@@ -656,12 +552,9 @@ static int handle_gdb_add_breakpoint(const char *buff, size_t len)
 	expect_char_range('0', '4', ptr, len);
 	expect_char(',', ptr, len);
 
-	/* Get breakpoint address. */
+	/* Get breakpoint address (that is already physical). */
 	addr = read_int(ptr, &len, &ptr, 16);
 	expect_char(',', ptr, len);
-
-	/* Maybe convert to physical, if not already, */
-	addr = to_physical(addr);
 
 	/*
 	 * Check which type of breakpoint we have and act
@@ -1164,13 +1057,21 @@ static void handle_serial_single_step_stop(struct srm_x86_regs *x86_rm)
 	/*
 	 * We need to disconsider the first 8 16-bit
 	 * registers already pushed in the stack.
+	 *
+	 * Also, we have to convert our ESP/EBP pointers
+	 * to physical addresses...
 	 */
-	x86_regs.r.esp = x86_rm->esp + (2*8);
+	x86_regs.r.esp = TO_PHYS(x86_rm->ss, x86_rm->esp + (2*8));
+	x86_regs.r.ebp = TO_PHYS(x86_rm->ss, x86_rm->ebp);
 
-	x86_regs.r.ebp = x86_rm->ebp;
 	x86_regs.r.esi = x86_rm->esi;
 	x86_regs.r.edi = x86_rm->edi;
-	x86_regs.r.eip = x86_rm->eip;
+
+	/*
+	 * Fix EIP in order to tell GDB correctly
+	 */
+	x86_regs.r.eip = TO_PHYS(x86_rm->cs, x86_rm->eip);
+
 	x86_regs.r.eflags = x86_rm->eflags;
 	x86_regs.r.cs = x86_rm->cs;
 	x86_regs.r.ss = x86_rm->ss;
@@ -1184,14 +1085,9 @@ static void handle_serial_single_step_stop(struct srm_x86_regs *x86_rm)
 		printf("Single-stepped, you can now connect GDB!\n");
 
 	/*
-	 * If there is a valid connection already:
-	 * - Check if this a 'silent' single-step
-	     (see handle_gdb_add_sw_breakpoint() for more info)
-	 *
-	 * Otherwise, tell GDB that we're already stopped.
+	 * If there is a valid connection already,
+	 * tell GDB that we're already stopped.
 	 */
-	else if (single_step_before_continue)
-		send_gdb_continue();
 	else
 		send_gdb_halt_reason();
 
