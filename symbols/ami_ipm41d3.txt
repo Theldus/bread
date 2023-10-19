@@ -1,0 +1,180 @@
+#################################################
+# PCWare IPM41-D3 BIOS symbols - by Theldus     #
+# ROM md5: 7acada7a28efe1f106ca94eb41e3a11e     #
+# Down: https://archive.org/details/ipm41-d3    #
+# File: ITAUTEC-ST-4254_12-08-2009_C0BD8BD1.ROM #
+#################################################
+
+# Note1: These functions/symbols/variables and etc
+# were gathered via RE and are not, in any way,
+# the official symbols nor leaked versions
+# of it. All of this, is *my* interpretation
+# of the BIOS ROM, and it might be entirely
+# wrong too.
+
+# Note2: Although these addresses are specific
+# to this ROM, their offset within the modules
+# (whether 1B, 18...) should be the same or
+# similar between multiple AMIBIOS8 BIOSes.
+
+# Note3: Following the label, there are a 5-byte
+# signature, representing the first five bytes
+# found on that address... With this signature
+# its pretty easy to find these routines between
+# multiple BIOSes, wherever they are
+
+0xffff0 resetvector # signature: ea 5b e0 00 f0
+
+#
+# Module 0x1B
+# Print/keyboard routines
+# DIM_CSEG_F0000
+# Memory base address: 0xF0000
+#
+0xf7619 print_newline      # sig: e8 f0 ff cb 50
+0xf7608 print_char_in_al   # sig: e8 f5 ff cb 50
+
+# Print string in bx and adds newline, bx points to string
+# idx on string table
+0xf7636 print_string1_bx_nl # sig: e8 f0 ff cb 9c
+
+# Print string in bx, without newline
+0xf7625 print_string2_bx    # sig: e8 f5 ff cb e8
+
+# Print string pointed by DS:ESI (null terminated)
+0xf7725 print_string3_ds_esi # sig: 1e 66 60 e8 65
+
+# Print character in al via int 10h (low level)
+0xf771b print_char_in_al2    # sig: 50 b4 0e eb e8
+
+# Wait for keystroke
+0xf7565 wait_for_keystroke   # sig: e8 f8 ff cb b4
+
+#
+# Module 0x18, Display Manager
+# Low-level print routines
+# Memory base address: 0x61B50
+#
+
+# Display manager entry point
+0x61b50 dmgr_entry # sig: 55 8b ec 83 c5
+
+# Print character pointed in al
+# Note: this routine is called by every other routine
+# that prints string, so its a very interesting function!!
+0x636e3 dmgr_print_char_al # sig: 66 60 1e 2e f7
+
+# Draw a single character
+# This is the low-level routine called by the function above
+# (dmgr_print_char_al)
+# Parameters: dunno... al?
+0x637f4 dmgr_draw_character # sig: 51 66 56 53 52
+
+# Prints full string, but only discovers its full address later
+# Parameters: dunno
+0x621c7 dmgr_print_string   # sig: 51 66 56 1e 52
+
+# Retrieves the full esi/physical string address for the string
+# to be printed, based on the Multi Language module (21h)
+# Parameters: dunno
+0x62419 dmgr_retrieve_esi   # sig: 66 2e 8b 36 c5
+
+# *Do the actual fucking print to the screen!*
+# This function receives a 4-byte pixels in EAX
+# and then prints it into the screen on the address
+# 0xA0000, more specifically: ES:ESI (ES=0xa0000)
+# Parameters:
+#   EAX = 4-byte pixel to print
+#
+0x63892 dmgr_actual_print_pixels  # sig: 06 68 00 a0 07
+
+# Seems to do the same as the previous, but havent
+# investigated enough
+0x638a2 dmgr_actual_print_pixels2 # sig: 51 53 8a 5e 0b
+
+# Calculates the destination video offset in EDI
+# (to be used in dmgr_actual_print) based in the
+# current screen X and Y coordinates and screen
+# width (generally 640).
+# Parameters:
+#   BX: Current X screen coordinate
+#   DX: Current Y screen coordinate
+# Return:
+#   EDI: ((screen_width * y) + x) & 0xffff
+#
+0x63127 dmgr_retrieve_actual_edi  # sig: 66 50 66 53 66
+
+# Higher level function of the above, this function
+# *calls* the above function and some others, dont
+# know why...
+# Parameters:
+#   BX: Current X screen coordinate
+#   DX: Current Y screen coordinate
+#
+# This routine is called inside of
+# dmgr_print_char_al()
+0x63190 dmgr_retrieve_edi # sig: 50 51 66 52 2e
+
+
+#
+# Module 0x1B
+# CPU name grab functions (via CPUID)
+# RUN_CSEG_40000
+# Memory base address: 0x40000
+#
+0x411ba cseg_get_cpuname # sig: 66 60 57 66 b8
+
+#
+# Change current video mode (like, from 640x480 to 1024x768)
+# in order to show the BIOS logo.
+#
+# This code path is only called if the BIOS logo is enabled
+# on the BIOS.
+#
+# Parameters: dunno
+#
+0x47196 cseg_change_video_mode_logo # sig: 66 83 3e 2c 08
+
+#
+# Some print points, also in RUN_CSEG and others
+#
+
+# Press F1 to Run SETUP, sig: bb ef 02 9a 36
+0x43f7b prt_press_f1_to_run_setup
+# Press F2 to load default values..., sig: bb ec 02 9a 36
+0x43f83 prt_press_f2_to_load
+# Auto-detecting USB Mass Storage Devices ..
+# FDR_CSEG, base: 0x249D0
+0x24ab6 prt_auto_detecting_usb_mass # sig: bb 9c 02 9a 25
+# USB mass storage devices found and configured. (FDR_CSEG)
+0x24b52 prt_usb_mass_storage_device # sig: bb 9f 02 9a 25
+# Press F12 if you want to boot from the network (RUN_CSEG)
+0x47c37 prt_press_f12_if_you        # sig: bb 93 03 64 80
+# Network selected as... (RUN_CSEG)
+0x47c42 prt_network_selected        # sig: bb 94 03 64 c7
+# Press F11 for BBS POPUP
+0x4814f prt_press_f11_for_bbs       # sig: bb 9a 03 64 80
+# Initializing USB Controllers ..
+0x48185 prt_init_usb_contro         # sig: bb a8 03 94 25
+# Reboot and Select proper Boot device (failed to boot msg)
+# INT10_CSEG, base: 0xE5BE0
+0xe5cfd prt_reboot_and_select       # sig: bb 0d 00 9a 25
+
+#
+# Some data/variables/etc
+#
+0xf3864  str_cpu_name
+0x104e84 str_press_f1_to_run_setup
+0x104e1f str_press_f2_to_load
+0x10475b str_auto_detecting_usb_mass
+0x104793 str_usb_mass_storage_device
+0x105646 str_press_f12_if_you
+0x105675 str_network_selected
+0x10575a str_press_f11_for_bbs
+0x105817 str_init_usb_contro
+0x100985 str_reboot_and_select
+
+# Some setup strings, just because why not?
+0x1037db str_standard_bios_features
+0x10382a str_advanced_bios_features
+0x103876 str_advanced_chipset_features
