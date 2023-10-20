@@ -57,6 +57,45 @@ By implementing the GDB stub, BREAD has many features out-of-the-box. The follow
 [^bp_note]: Breakpoints are implemented as hardware breakpoints and therefore have a limited number of available breakpoints. In the current implementation, only 1 active breakpoint at a time!
 [^watchp_note]: Hardware watchpoints (like breakpoints) are also only supported one at a time.
 
+## GDB Symbols
+Reverse engineering a raw binary, such as a BIOS, in GDB automatically implies not having its original symbols. However, as the RE process progresses, the user/programmer/hacker gains a better understanding of certain parts of the code, and static analysis tools like IDA, Cutter, Ghidra, and others allow for the addition of annotations, comments, function definitions, and more. These enhancements significantly boost the user's productivity.
+
+With this in mind, there is a companion Python script in the project called `symbolify.py`. Given a list of symbols (address label), it generates a minimal ELF file with these symbols added. This ELF can then be loaded into GDB later and used to greatly simplify the debugging process.
+
+The symbol file can include whitespace, blank lines, comments (#), and comments on the address line. Addresses can be in decimal or hexadecimal format, and labels/symbols (separated by one or more whitespace characters) can be of the form [a-z0-9_]+, as in (a real example can be found in [symbols/ami_ipm41d3.txt](symbols/ami_ipm41d3.txt)):
+
+```bash
+#
+# This is a comment
+#
+0xdeadbeef my_symbol1
+
+0x123 othersymbol # This function does xyz
+
+# Example with decimal address
+456 anotherone
+```
+### Usage
+For example, considering the symbol file available at symbols/ami_ipm41d3.txt, the user can do something like:
+
+```bash
+$ ./simbolify.py symbols/ami_ipm41d3.txt ip41symbols.elf
+```
+
+Then, load it in GDB as in:
+```text
+(gdb) add-symbol-file ip41symbols.elf 0
+add symbol table from file "ip41symbols.elf" at
+	.text_addr = 0x0
+(y or n) y
+Reading symbols from ip41symbols.elf...
+(No debugging symbols found in ip41symbols.elf)
+(gdb) p cseg_
+cseg_change_video_mode_logo  cseg_get_cpuname             
+(gdb) p cseg_
+```
+Note that even GDB auto-complete works as expected, amazing?
+
 ## Limitations
 How many? Yes.
 Since the code being debugged is unaware that it is being debugged, it can interfere with the debugger in several ways, to name a few:
