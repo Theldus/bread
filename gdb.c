@@ -993,7 +993,7 @@ static int handle_serial_receive_read_memory(void)
 	 *
 	 * If data, nothing need to be done.
 	 */
-	break_eip  = (x86_regs.r.cs << 4) + x86_regs.r.eip;
+	break_eip  = x86_regs.r.eip;
 	start_addr = last_dump_phys_addr;
 	end_addr   = start_addr + last_dump_amnt - 1;
 
